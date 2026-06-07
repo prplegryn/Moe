@@ -1,0 +1,11 @@
+.gradle/
+.idea/
+.codex_refs/
+build/
+local.properties
+*.iml
+captures/
+app/build/
+app/release/
+*.apk
+*.aab
