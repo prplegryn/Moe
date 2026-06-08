@@ -86,11 +86,13 @@ class GuangyaClient(
             put("meta", meta)
             captchaToken?.let { put("captcha_token", it) }
         }
-        val result = postPublicJson(
-            url = "https://account.guangyapan.com/v1/shield/captcha/init",
-            body = body,
-            headers = accountHeaders(),
-        )
+        val result = requestStep("初始化光鸭验证码") {
+            postPublicJson(
+                url = "https://account.guangyapan.com/v1/shield/captcha/init",
+                body = body,
+                headers = accountHeaders(),
+            )
+        }
         return SmsCaptcha(
             captchaToken = result.deepString("captcha_token", "captchaToken"),
             verificationUrl = result.deepString("url", "captcha_url", "captchaUrl"),
@@ -100,40 +102,42 @@ class GuangyaClient(
     suspend fun loginSmsSend(
         phone: String,
         captchaToken: String,
-        signInCaptchaToken: String,
         target: String = "ANY",
     ): SmsRequest {
         val identity = normalizePhone(phone)
-        val result = postPublicJson(
-            url = "https://account.guangyapan.com/v1/auth/verification",
-            body = buildJsonObject {
-                put("phone_number", identity.verificationPhoneNumber)
-                put("target", target)
-                put("client_id", CLIENT_ID)
-            },
-            headers = accountHeaders(extra = mapOf("x-captcha-token" to captchaToken)),
-        )
+        val result = requestStep("发送光鸭短信验证码") {
+            postPublicJson(
+                url = "https://account.guangyapan.com/v1/auth/verification",
+                body = buildJsonObject {
+                    put("phone_number", identity.verificationPhoneNumber)
+                    put("target", target)
+                    put("client_id", CLIENT_ID)
+                },
+                headers = accountHeaders(extra = mapOf("x-captcha-token" to captchaToken)),
+            )
+        }
         val verificationId = result.deepString("verification_id", "verificationId")
             ?: throw IOException("Guangya SMS send did not return verification_id")
         return SmsRequest(
             phone = identity.displayPhone,
             username = identity.username,
             captchaToken = captchaToken,
-            signInCaptchaToken = signInCaptchaToken,
             verificationId = verificationId,
         )
     }
 
     suspend fun loginSmsVerify(verificationId: String, verificationCode: String): String {
-        val result = postPublicJson(
-            url = "https://account.guangyapan.com/v1/auth/verification/verify",
-            body = buildJsonObject {
-                put("verification_id", verificationId)
-                put("verification_code", verificationCode)
-                put("client_id", CLIENT_ID)
-            },
-            headers = accountHeaders(),
-        )
+        val result = requestStep("校验光鸭短信验证码") {
+            postPublicJson(
+                url = "https://account.guangyapan.com/v1/auth/verification/verify",
+                body = buildJsonObject {
+                    put("verification_id", verificationId)
+                    put("verification_code", verificationCode)
+                    put("client_id", CLIENT_ID)
+                },
+                headers = accountHeaders(),
+            )
+        }
         return result.deepString("verification_token", "verificationToken")
             ?: throw IOException("Guangya SMS verify did not return verification_token")
     }
@@ -144,16 +148,18 @@ class GuangyaClient(
         verificationToken: String,
         captchaToken: String,
     ): CloudAuthState {
-        val result = postPublicJson(
-            url = "https://account.guangyapan.com/v1/auth/signin",
-            body = buildJsonObject {
-                put("verification_code", verificationCode)
-                put("verification_token", verificationToken)
-                put("username", username)
-                put("client_id", CLIENT_ID)
-            },
-            headers = accountHeaders(extra = mapOf("x-captcha-token" to captchaToken)),
-        )
+        val result = requestStep("登录光鸭账号") {
+            postPublicJson(
+                url = "https://account.guangyapan.com/v1/auth/signin",
+                body = buildJsonObject {
+                    put("verification_code", verificationCode)
+                    put("verification_token", verificationToken)
+                    put("username", username)
+                    put("client_id", CLIENT_ID)
+                },
+                headers = accountHeaders(extra = mapOf("x-captcha-token" to captchaToken)),
+            )
+        }
         return updateAuthFromTokenResult(result, username)
     }
 
@@ -230,6 +236,14 @@ class GuangyaClient(
     private suspend fun postPublicJson(url: String, body: JsonObject, headers: Headers): JsonObject {
         val result = executeJsonRequest(url, body, headers, canThrowUnauthorized = true)
         return result.body
+    }
+
+    private suspend fun requestStep(label: String, block: suspend () -> JsonObject): JsonObject {
+        return try {
+            block()
+        } catch (error: IOException) {
+            throw IOException("$label失败：${error.message}", error)
+        }
     }
 
     private suspend fun executeJsonRequest(

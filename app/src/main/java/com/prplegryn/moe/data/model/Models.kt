@@ -19,7 +19,6 @@ data class SmsRequest(
     val phone: String,
     val username: String,
     val captchaToken: String,
-    val signInCaptchaToken: String,
     val verificationId: String,
 )
 
