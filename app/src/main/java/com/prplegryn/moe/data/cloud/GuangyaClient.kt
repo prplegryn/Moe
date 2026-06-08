@@ -336,17 +336,20 @@ class GuangyaClient(
             val obj = element as? JsonObject ?: return@mapNotNull null
             val id = obj.deepString("fileId", "file_id", "id", "fid") ?: return@mapNotNull null
             val name = obj.deepString("fileName", "filename", "file_name", "name", "title") ?: return@mapNotNull null
-            val fileType = obj.deepInt("fileType", "file_type", "type") ?: 2
+            val rawFileType = obj.deepInt("fileType", "file_type", "type")
+            val resType = obj.deepInt("resType", "res_type")
+            val size = obj.deepLong("size", "fileSize", "file_size") ?: 0L
             val isDirectory = obj.deepBoolean("isDir", "is_dir", "isDirectory", "folder", "directory")
-                ?: (fileType == 0)
+                ?: (resType == 2 || rawFileType == 0 || (rawFileType == null && size == 0L))
+            val fileType = rawFileType ?: if (isDirectory) 0 else 2
             CloudFile(
                 fileId = id,
                 parentId = obj.deepString("parentId", "parent_id", "pid"),
                 name = name,
-                size = obj.deepLong("size", "fileSize", "file_size") ?: 0L,
+                size = size,
                 fileType = fileType,
                 isDirectory = isDirectory,
-                updatedAt = obj.deepLong("updatedAt", "updateTime", "updated_time", "mtime") ?: 0L,
+                updatedAt = obj.deepLong("updatedAt", "updateTime", "updated_time", "mtime", "utime", "ctime") ?: 0L,
             )
         }
     }

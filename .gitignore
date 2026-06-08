@@ -9,3 +9,7 @@ app/build/
 app/release/
 *.apk
 *.aab
+__pycache__/
+*.pyc
+.guangya_probe_auth.json
+.guangya_probe_dumps/
