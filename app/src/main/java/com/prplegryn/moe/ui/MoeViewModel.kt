@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.prplegryn.moe.MoeApplication
 import com.prplegryn.moe.data.model.CloudFile
+import com.prplegryn.moe.data.model.CloudProfile
 import com.prplegryn.moe.data.model.LibraryItem
 import com.prplegryn.moe.data.model.LibrarySnapshot
 import com.prplegryn.moe.data.model.SmsRequest
@@ -40,10 +41,6 @@ class MoeViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(code = value) }
     }
 
-    fun updateAuthJson(value: String) {
-        _uiState.update { it.copy(authJsonDraft = value) }
-    }
-
     fun clearMessage() {
         _uiState.update { it.copy(message = null) }
     }
@@ -53,17 +50,11 @@ class MoeViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 snapshot = snapshot,
+                profile = fallbackProfile(snapshot),
                 importPathDraft = snapshot.settings.importPath,
             )
         }
-    }
-
-    fun openDetails(item: LibraryItem) {
-        _uiState.update { it.copy(selectedItemId = item.resource.id) }
-    }
-
-    fun closeDetails() {
-        _uiState.update { it.copy(selectedItemId = null) }
+        refreshProfileIfLoggedIn()
     }
 
     fun saveImportPath() {
@@ -77,7 +68,7 @@ class MoeViewModel(application: Application) : AndroidViewModel(application) {
             path = state.importPathDraft,
             folderId = selectedFolderId,
         )
-        _uiState.update { it.copy(snapshot = repository.snapshot(), message = "导入路径已保存") }
+        _uiState.update { it.copy(snapshot = repository.snapshot(), message = "获取路径已保存") }
     }
 
     fun refreshDirectoryPicker() = launchBusy {
@@ -158,64 +149,40 @@ class MoeViewModel(application: Application) : AndroidViewModel(application) {
         val code = uiState.value.code.trim()
         require(code.isNotBlank()) { "请输入验证码" }
         repository.completeSmsLogin(request, code)
+        val snapshot = repository.snapshot()
         _uiState.update {
             it.copy(
                 code = "",
                 smsRequest = null,
                 captchaUrl = null,
-                snapshot = repository.snapshot(),
+                snapshot = snapshot,
+                profile = fallbackProfile(snapshot),
                 message = "已登录光鸭",
             )
         }
-    }
-
-    fun importAuthJson() = launchBusy {
-        val rawJson = uiState.value.authJsonDraft.trim()
-        require(rawJson.isNotBlank()) { "请粘贴光鸭凭据 JSON" }
-        repository.importAuthJson(rawJson)
-        _uiState.update {
-            it.copy(
-                authJsonDraft = "",
-                code = "",
-                smsRequest = null,
-                captchaUrl = null,
-                snapshot = repository.snapshot(),
-                message = "已导入光鸭登录凭据",
-            )
-        }
+        refreshProfileIfLoggedIn()
     }
 
     fun logout() {
         repository.logout()
-        _uiState.update { it.copy(snapshot = repository.snapshot(), message = "已退出登录") }
+        _uiState.update {
+            it.copy(
+                snapshot = repository.snapshot(),
+                profile = null,
+                code = "",
+                smsRequest = null,
+                captchaUrl = null,
+                message = "已退出登录",
+            )
+        }
     }
 
-    fun importCloudVideos() = launchBusy {
+    fun fetchCloudVideos() = launchBusy {
         val count = repository.importCloudVideos()
         _uiState.update {
             it.copy(
                 snapshot = repository.snapshot(),
-                message = "已导入 $count 个视频，已自动匹配资料",
-            )
-        }
-    }
-
-    fun scrapeMissing() = launchBusy {
-        val count = repository.scrapeMissing()
-        _uiState.update {
-            it.copy(
-                snapshot = repository.snapshot(),
-                message = "已匹配 $count 个条目",
-            )
-        }
-    }
-
-    fun scrape(item: LibraryItem) = launchBusy {
-        val ok = repository.scrape(item)
-        _uiState.update {
-            it.copy(
-                snapshot = repository.snapshot(),
-                message = if (ok) "已匹配 ${item.resource.name}" else "未找到匹配资料",
+                message = "已获取 $count 个视频",
             )
         }
     }
@@ -246,6 +213,21 @@ class MoeViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(activePlayer = null, snapshot = repository.snapshot()) }
     }
 
+    private fun refreshProfileIfLoggedIn() {
+        if (uiState.value.snapshot.auth == null) return
+        viewModelScope.launch {
+            val profile = runCatching { repository.accountProfile() }
+                .getOrElse { fallbackProfile(uiState.value.snapshot) }
+            _uiState.update {
+                if (it.snapshot.auth == null) {
+                    it
+                } else {
+                    it.copy(profile = profile)
+                }
+            }
+        }
+    }
+
     private fun launchBusy(block: suspend () -> Unit) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, message = null) }
@@ -259,21 +241,19 @@ class MoeViewModel(application: Application) : AndroidViewModel(application) {
 }
 
 enum class MoeTab {
+    Home,
     Library,
-    Cloud,
-    Settings,
 }
 
 data class MoeUiState(
-    val tab: MoeTab = MoeTab.Library,
+    val tab: MoeTab = MoeTab.Home,
     val snapshot: LibrarySnapshot = LibrarySnapshot(auth = null, items = emptyList()),
+    val profile: CloudProfile? = null,
     val isLoading: Boolean = false,
     val message: String? = null,
     val phone: String = "",
     val code: String = "",
-    val authJsonDraft: String = "",
     val importPathDraft: String = "",
-    val selectedItemId: Long? = null,
     val directoryPicker: DirectoryPickerState = DirectoryPickerState(),
     val smsRequest: SmsRequest? = null,
     val captchaUrl: String? = null,
@@ -298,6 +278,15 @@ data class DirectoryPickerState(
     val isLoaded: Boolean = false,
 )
 
+private fun fallbackProfile(snapshot: LibrarySnapshot): CloudProfile? {
+    val auth = snapshot.auth ?: return null
+    return CloudProfile(
+        displayName = auth.phone ?: "光鸭账号",
+        avatarUrl = null,
+        phone = auth.phone,
+    )
+}
+
 private fun List<DirectoryCrumb>.toImportPath(): String {
     val parts = drop(1).map { it.name.trim() }.filter { it.isNotBlank() }
     return if (parts.isEmpty()) "" else "/" + parts.joinToString("/")
@@ -317,6 +306,8 @@ private fun phoneKey(value: String): String {
 private fun Throwable.userFacingMessage(): String {
     val raw = message ?: return "操作失败"
     return when {
+        "Guangya account is not logged in" in raw -> "请先登录光鸭网盘"
+        "Unable to resolve playable URL" in raw || "playable download URL" in raw -> "无法获取播放地址"
         "HTTP 429" in raw || "resource_exhausted" in raw || "text message per day" in raw ->
             "今日短信验证码额度已用完（同一手机号每天最多 10 条）。如果已经收到验证码，请直接输入后登录；否则需要明天再试。"
         else -> raw

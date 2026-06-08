@@ -2,6 +2,7 @@ package com.prplegryn.moe.data.cloud
 
 import com.prplegryn.moe.data.model.CloudAuthState
 import com.prplegryn.moe.data.model.CloudFile
+import com.prplegryn.moe.data.model.CloudProfile
 import com.prplegryn.moe.data.model.SmsCaptcha
 import com.prplegryn.moe.data.model.SmsRequest
 import java.io.IOException
@@ -20,13 +21,10 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
-import kotlinx.serialization.json.putJsonObject
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -203,6 +201,43 @@ class GuangyaClient(
         )
         return result.findUrl()
             ?: throw IOException("Guangya did not return a playable download URL")
+    }
+
+    suspend fun userInfo(): CloudProfile {
+        ensureFreshToken()
+        val state = authState ?: throw IOException("Guangya account is not logged in")
+        val result = requestStep("获取光鸭账号信息") {
+            postPublicJson(
+                url = "https://account.guangyapan.com/v1/user/me",
+                body = JsonObject(emptyMap()),
+                headers = accountHeaders(extra = mapOf("authorization" to "Bearer ${state.accessToken}")),
+            )
+        }
+        val phone = result.deepString("phone", "mobile", "phone_number", "phoneNumber", "username")
+            ?: state.phone
+        val name = result.deepString(
+            "nickname",
+            "nickName",
+            "nick_name",
+            "displayName",
+            "display_name",
+            "name",
+            "username",
+        ) ?: phone ?: "光鸭账号"
+        val avatar = result.deepString(
+            "avatar",
+            "avatarUrl",
+            "avatar_url",
+            "headUrl",
+            "head_url",
+            "portrait",
+            "icon",
+        )
+        return CloudProfile(
+            displayName = name,
+            avatarUrl = avatar,
+            phone = phone,
+        )
     }
 
     suspend fun refreshToken(): CloudAuthState {

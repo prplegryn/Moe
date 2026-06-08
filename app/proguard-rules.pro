@@ -1,2 +1,1 @@
 -keep class kotlinx.serialization.** { *; }
--keep class org.jsoup.** { *; }

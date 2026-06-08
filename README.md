@@ -1,28 +1,25 @@
 # Moe
 
-Moe 是一个 Android 原生影视库应用，使用 Jetpack Compose + Material Design 3 / Material You 实现。
+Moe 是一个 Android 原生光鸭云视频库应用，使用 Jetpack Compose + Material Design 3 实现。
 
 ## 功能
 
-- 光鸭网盘短信登录、token 刷新、全目录视频导入、播放直链解析
-- 本地影视库、元数据、播放进度 SQLite 保存
-- Javinizer 风格的多源刮削与字段优先级聚合
-- Android Media3 播放器和本地播放进度记忆
+- 光鸭网盘短信登录、token 刷新、目录视频获取、播放直链解析
+- 本地视频库和播放进度 SQLite 保存
+- 竖屏 VR180 SBS 左眼 2D 映射播放器和本地播放进度记忆
 - GitHub Actions 自动构建已签名 release APK
 
 ## 技术实现
 
-- UI: Jetpack Compose Material3，动态色，底部导航，48dp 以上触控目标
+- UI: Jetpack Compose Material3，顶部双标签导航，48dp 以上触控目标
 - 网络: OkHttp
-- 刮削: Jsoup，当前实现 JavDB 和 JavBus Android 原生 scraper
-- 播放: AndroidX Media3 ExoPlayer
+- 播放: AndroidX Media3 ExoPlayer + GLSurfaceView/OpenGL ES 2.0
 - 本地库: SQLiteOpenHelper
 - 构建: Gradle 8.10.2、AGP 8.7.3、Kotlin 2.0.21
 
 ## 参考实现
 
 - 光鸭网盘接口流程参考 https://github.com/DDSRem-Dev/guangyaclient
-- 刮削架构和聚合思路参考 https://github.com/javinizer/javinizer-go
 
 ## CI 构建
 

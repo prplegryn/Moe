@@ -5,22 +5,15 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
-import com.prplegryn.moe.data.model.ActressInfo
 import com.prplegryn.moe.data.model.AppSettings
 import com.prplegryn.moe.data.model.CloudAuthState
 import com.prplegryn.moe.data.model.CloudFile
 import com.prplegryn.moe.data.model.LibraryItem
 import com.prplegryn.moe.data.model.LibrarySnapshot
 import com.prplegryn.moe.data.model.MediaResource
-import com.prplegryn.moe.data.model.MovieMetadata
 import com.prplegryn.moe.data.model.WatchProgress
-import kotlinx.serialization.builtins.ListSerializer
-import kotlinx.serialization.builtins.serializer
-import kotlinx.serialization.json.Json
 
 class MoeDatabase(context: Context) : SQLiteOpenHelper(context, "moe.db", null, 2) {
-    private val json = Json { ignoreUnknownKeys = true }
-
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """
@@ -52,36 +45,6 @@ class MoeDatabase(context: Context) : SQLiteOpenHelper(context, "moe.db", null, 
         )
         db.execSQL(
             """
-            CREATE TABLE metadata (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                resource_id INTEGER NOT NULL UNIQUE,
-                content_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                original_title TEXT NOT NULL,
-                description TEXT,
-                release_date TEXT,
-                runtime_minutes INTEGER NOT NULL,
-                director TEXT,
-                maker TEXT,
-                label TEXT,
-                series TEXT,
-                rating_score REAL,
-                rating_votes INTEGER,
-                poster_url TEXT,
-                cover_url TEXT,
-                trailer_url TEXT,
-                source_name TEXT NOT NULL,
-                source_url TEXT NOT NULL,
-                actresses TEXT NOT NULL,
-                genres TEXT NOT NULL,
-                screenshots TEXT NOT NULL,
-                updated_at INTEGER NOT NULL,
-                FOREIGN KEY(resource_id) REFERENCES resources(id) ON DELETE CASCADE
-            )
-            """.trimIndent(),
-        )
-        db.execSQL(
-            """
             CREATE TABLE progress (
                 resource_id INTEGER PRIMARY KEY,
                 position_ms INTEGER NOT NULL,
@@ -93,7 +56,6 @@ class MoeDatabase(context: Context) : SQLiteOpenHelper(context, "moe.db", null, 
         )
         createSettingsTable(db)
         db.execSQL("CREATE INDEX idx_resources_updated ON resources(updated_at DESC)")
-        db.execSQL("CREATE INDEX idx_metadata_content_id ON metadata(content_id)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -116,12 +78,10 @@ class MoeDatabase(context: Context) : SQLiteOpenHelper(context, "moe.db", null, 
     fun snapshot(): LibrarySnapshot {
         val auth = getAuth()
         val settings = getSettings()
-        val metadata = getMetadata().associateBy { it.resourceId }
         val progress = getProgress().associateBy { it.resourceId }
         val items = getResources().map { resource ->
             LibraryItem(
                 resource = resource,
-                metadata = metadata[resource.id],
                 progress = progress[resource.id],
             )
         }
@@ -271,53 +231,6 @@ class MoeDatabase(context: Context) : SQLiteOpenHelper(context, "moe.db", null, 
         }
     }
 
-    fun saveMetadata(metadata: MovieMetadata) {
-        val now = System.currentTimeMillis()
-        writableDatabase.insertWithOnConflict(
-            "metadata",
-            null,
-            ContentValues().apply {
-                put("resource_id", metadata.resourceId)
-                put("content_id", metadata.contentId)
-                put("title", metadata.title)
-                put("original_title", metadata.originalTitle)
-                put("description", metadata.description)
-                put("release_date", metadata.releaseDate)
-                put("runtime_minutes", metadata.runtimeMinutes)
-                put("director", metadata.director)
-                put("maker", metadata.maker)
-                put("label", metadata.label)
-                put("series", metadata.series)
-                put("rating_score", metadata.ratingScore)
-                put("rating_votes", metadata.ratingVotes)
-                put("poster_url", metadata.posterUrl)
-                put("cover_url", metadata.coverUrl)
-                put("trailer_url", metadata.trailerUrl)
-                put("source_name", metadata.sourceName)
-                put("source_url", metadata.sourceUrl)
-                put("actresses", encodeActresses(metadata.actresses))
-                put("genres", encodeStrings(metadata.genres))
-                put("screenshots", encodeStrings(metadata.screenshots))
-                put("updated_at", now)
-            },
-            SQLiteDatabase.CONFLICT_REPLACE,
-        )
-    }
-
-    fun getMetadata(): List<MovieMetadata> = readableDatabase.query(
-        "metadata",
-        null,
-        null,
-        null,
-        null,
-        null,
-        "updated_at DESC",
-    ).use { cursor ->
-        buildList {
-            while (cursor.moveToNext()) add(cursor.toMetadata())
-        }
-    }
-
     fun saveProgress(resourceId: Long, positionMs: Long, durationMs: Long) {
         writableDatabase.insertWithOnConflict(
             "progress",
@@ -367,46 +280,6 @@ class MoeDatabase(context: Context) : SQLiteOpenHelper(context, "moe.db", null, 
         importedAt = requiredLong("imported_at"),
         updatedAt = requiredLong("updated_at"),
     )
-
-    private fun Cursor.toMetadata() = MovieMetadata(
-        id = requiredLong("id"),
-        resourceId = requiredLong("resource_id"),
-        contentId = requiredString("content_id"),
-        title = requiredString("title"),
-        originalTitle = requiredString("original_title"),
-        description = optionalString("description"),
-        releaseDate = optionalString("release_date"),
-        runtimeMinutes = requiredInt("runtime_minutes"),
-        director = optionalString("director"),
-        maker = optionalString("maker"),
-        label = optionalString("label"),
-        series = optionalString("series"),
-        ratingScore = optionalDouble("rating_score"),
-        ratingVotes = optionalInt("rating_votes"),
-        posterUrl = optionalString("poster_url"),
-        coverUrl = optionalString("cover_url"),
-        trailerUrl = optionalString("trailer_url"),
-        sourceName = requiredString("source_name"),
-        sourceUrl = requiredString("source_url"),
-        actresses = decodeActresses(requiredString("actresses")),
-        genres = decodeStrings(requiredString("genres")),
-        screenshots = decodeStrings(requiredString("screenshots")),
-        updatedAt = requiredLong("updated_at"),
-    )
-
-    private fun encodeActresses(value: List<ActressInfo>) =
-        json.encodeToString(ListSerializer(ActressInfo.serializer()), value)
-
-    private fun decodeActresses(value: String) = runCatching {
-        json.decodeFromString(ListSerializer(ActressInfo.serializer()), value)
-    }.getOrDefault(emptyList())
-
-    private fun encodeStrings(value: List<String>) =
-        json.encodeToString(ListSerializer(String.serializer()), value)
-
-    private fun decodeStrings(value: String) = runCatching {
-        json.decodeFromString(ListSerializer(String.serializer()), value)
-    }.getOrDefault(emptyList())
 }
 
 private fun Cursor.requiredString(name: String): String = getString(column(name))
@@ -421,16 +294,6 @@ private fun Cursor.optionalString(name: String): String? {
 private fun Cursor.optionalLong(name: String): Long? {
     val index = column(name)
     return if (isNull(index)) null else getLong(index)
-}
-
-private fun Cursor.optionalInt(name: String): Int? {
-    val index = column(name)
-    return if (isNull(index)) null else getInt(index)
-}
-
-private fun Cursor.optionalDouble(name: String): Double? {
-    val index = column(name)
-    return if (isNull(index)) null else getDouble(index)
 }
 
 private fun Cursor.column(name: String): Int = getColumnIndexOrThrow(name)
