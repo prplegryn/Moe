@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.view.View
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -83,8 +84,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem as ExoMediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import coil.compose.AsyncImage
 import com.prplegryn.moe.data.model.CloudFile
@@ -779,14 +783,25 @@ private fun PlayerScreen(
     var scrubDeltaPx by remember { mutableStateOf(0f) }
     var scrubVisible by remember { mutableStateOf(false) }
     var scrubActive by remember { mutableStateOf(false) }
-    var renderView by remember { mutableStateOf<Vr180PlayerView?>(null) }
+    var playerError by remember { mutableStateOf<String?>(null) }
+    var playbackState by remember { mutableStateOf(Player.STATE_IDLE) }
+    val renderViewRef = remember { arrayOfNulls<Vr180PlayerView>(1) }
 
     val player = remember(state.url) {
         ExoPlayer.Builder(context).build().apply {
+            setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                true,
+            )
+            setHandleAudioBecomingNoisy(true)
             setMediaItem(ExoMediaItem.fromUri(state.url))
-            prepare()
             if (state.startPositionMs > 0L) seekTo(state.startPositionMs)
+            prepare()
             playWhenReady = true
+            play()
         }
     }
 
@@ -805,9 +820,36 @@ private fun PlayerScreen(
     BackHandler { closeOnce() }
 
     LaunchedEffect(player) {
+        player.playWhenReady = true
+        player.play()
         while (true) {
             delay(2_000L)
             onProgress(player.currentPosition, duration())
+        }
+    }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackStateValue: Int) {
+                playbackState = playbackStateValue
+                if (playbackStateValue == Player.STATE_READY && player.playWhenReady && !player.isPlaying) {
+                    player.play()
+                }
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying) playerError = null
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                playerError = listOfNotNull(error.errorCodeName, error.message)
+                    .joinToString("：")
+                    .ifBlank { "播放失败" }
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            player.removeListener(listener)
         }
     }
 
@@ -829,7 +871,10 @@ private fun PlayerScreen(
         val previous = activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         val decorView = activity?.window?.decorView
         val previousUiVisibility = decorView?.systemUiVisibility ?: 0
+        val keepScreenOn = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        val hadKeepScreenOn = activity?.window?.attributes?.flags?.let { it and keepScreenOn != 0 } ?: false
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        activity?.window?.addFlags(keepScreenOn)
         decorView?.systemUiVisibility = (
             previousUiVisibility
                 or View.SYSTEM_UI_FLAG_FULLSCREEN
@@ -842,7 +887,8 @@ private fun PlayerScreen(
         onDispose {
             closeOnce()
             player.clearVideoSurface()
-            renderView?.releaseVideoSurface()
+            renderViewRef[0]?.releaseVideoSurface()
+            if (!hadKeepScreenOn) activity?.window?.clearFlags(keepScreenOn)
             decorView?.systemUiVisibility = previousUiVisibility
             activity?.requestedOrientation = previous
             player.release()
@@ -860,14 +906,22 @@ private fun PlayerScreen(
             modifier = Modifier.fillMaxSize(),
             factory = { viewContext ->
                 Vr180PlayerView(viewContext).apply {
-                    renderView = this
-                    onSurfaceAvailable = { surface -> player.setVideoSurface(surface) }
+                    renderViewRef[0] = this
+                    onSurfaceAvailable = { surface ->
+                        player.setVideoSurface(surface)
+                        player.playWhenReady = true
+                        player.play()
+                    }
                     setProjection(projection)
                     setLook(yaw, pitch)
                 }
             },
             update = { view ->
-                view.onSurfaceAvailable = { surface -> player.setVideoSurface(surface) }
+                view.onSurfaceAvailable = { surface ->
+                    player.setVideoSurface(surface)
+                    player.playWhenReady = true
+                    player.play()
+                }
                 view.setProjection(projection)
                 view.setLook(yaw, pitch)
             },
@@ -974,6 +1028,25 @@ private fun PlayerScreen(
                     modifier = Modifier.align(Alignment.CenterHorizontally),
                 )
             }
+        }
+
+        playerError?.let { error ->
+            Text(
+                text = error,
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 24.dp)
+                    .background(Color.Black.copy(alpha = 0.62f), MaterialTheme.shapes.small)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        } ?: if (playbackState == Player.STATE_BUFFERING && currentPositionMs == 0L) {
+            CircularProgressIndicator(
+                modifier = Modifier.align(Alignment.Center).size(32.dp),
+                color = Color.White,
+                strokeWidth = 2.dp,
+            )
         }
     }
 }
