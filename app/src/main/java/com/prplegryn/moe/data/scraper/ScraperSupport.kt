@@ -111,23 +111,76 @@ class MetadataAggregator(
 }
 
 object MovieIdParser {
-    private val fc2 = Regex("""(?i)\bFC2[-_\s]*(?:PPV[-_\s]*)?(\d{3,8})\b""")
-    private val standard = Regex("""(?i)\b([A-Z]{2,8})[-_\s]?(\d{2,6})\b""")
-    private val ignoredPrefixes = setOf("HEVC", "H264", "H265", "X264", "X265", "FHD", "UHD")
+    private val fc2 = Regex("""(?i)(?<![A-Z0-9])FC2[-_\s]*(?:PPV[-_\s]*)?(\d{3,8})(?![A-Z0-9])""")
+    private val separatedStandard = Regex("""(?i)(?<![A-Z0-9])([A-Z]{2,8})[-_\s]+0*(\d{2,6})(?![A-Z0-9])""")
+    private val compactStandard = Regex("""(?i)(?<![A-Z0-9])([A-Z]{2,8})0*(\d{2,6})(?![A-Z0-9])""")
+    private val normalizedContentId = Regex("""(?i)^(?:FC2-\d{3,8}|[A-Z]{2,8}-\d{2,6})$""")
+    private val domainToken = Regex("""(?i)\b(?:[a-z0-9-]+\.)+(?:com|net|org|cc|tv|xyz|info|me|co|cn|jp)\b[@_\-\s]*""")
+    private val bracketChars = Regex("""[\[\](){}【】（）]""")
+    private val qualityToken = Regex("""(?i)\b(1080p|2160p|720p|4k|8k|x264|x265|h264|h265|hevc|aac|fhd|uhd|hdr|web-dl|bluray)\b""")
+    private val ignoredPrefixes = setOf(
+        "HEVC",
+        "H264",
+        "H265",
+        "X264",
+        "X265",
+        "FHD",
+        "UHD",
+        "HDR",
+        "HHD",
+        "WWW",
+        "COM",
+        "NET",
+    )
 
     fun extract(fileName: String): String {
         val base = fileName.substringBeforeLast('.')
-            .replace(Regex("""[\[\](){}]"""), " ")
-            .replace(Regex("""(?i)(1080p|2160p|720p|4k|8k|x264|x265|h264|h265|hevc|aac)"""), " ")
-        fc2.find(base)?.let { return "FC2-${it.groupValues[1]}" }
-        standard.findAll(base).forEach { match ->
-            val prefix = match.groupValues[1].uppercase(Locale.ROOT)
-            if (prefix !in ignoredPrefixes) {
-                return "$prefix-${match.groupValues[2]}"
-            }
-        }
-        return base.trim()
+        val normalized = normalizeFileName(base)
+        fc2.find(normalized)?.let { return "FC2-${it.groupValues[1]}" }
+        return findStandardId(normalized) ?: normalized.trim()
     }
+
+    fun isLikelyContentId(value: String): Boolean {
+        return normalizedContentId.matches(value.trim())
+    }
+
+    private fun normalizeFileName(value: String): String {
+        return value
+            .replace(domainToken, " ")
+            .replace(bracketChars, " ")
+            .replace('@', ' ')
+            .replace('_', ' ')
+            .replace(qualityToken, " ")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+    }
+
+    private fun findStandardId(value: String): String? {
+        findCandidates(value, separatedStandard, score = 100).firstOrNull()?.let { return it.id }
+        return findCandidates(value, compactStandard, score = 60).maxWithOrNull(
+            compareBy<IdCandidate> { it.score }.thenBy { it.start },
+        )?.id
+    }
+
+    private fun findCandidates(value: String, regex: Regex, score: Int): List<IdCandidate> {
+        return regex.findAll(value)
+            .mapNotNull { match ->
+                val prefix = match.groupValues[1].uppercase(Locale.ROOT)
+                val number = match.groupValues[2]
+                if (prefix in ignoredPrefixes) {
+                    null
+                } else {
+                    IdCandidate("$prefix-$number", match.range.first, score)
+                }
+            }
+            .toList()
+    }
+
+    private data class IdCandidate(
+        val id: String,
+        val start: Int,
+        val score: Int,
+    )
 }
 
 internal val htmlClient: OkHttpClient = OkHttpClient.Builder()

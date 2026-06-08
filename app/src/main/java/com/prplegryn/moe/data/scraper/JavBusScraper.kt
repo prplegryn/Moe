@@ -55,7 +55,7 @@ class JavBusScraper(
                 return href
             }
         }
-        return fallback
+        return fallback.takeUnless { MovieIdParser.isLikelyContentId(query) }
     }
 
     private fun parseDetail(doc: Document, sourceUrl: String, fallbackId: String): ScraperResult {
