@@ -17,6 +17,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -28,6 +30,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -48,6 +51,7 @@ import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.VideoLibrary
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
@@ -89,6 +93,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import coil.compose.AsyncImage
 import com.prplegryn.moe.data.model.CloudFile
@@ -783,7 +788,7 @@ private fun PlayerScreen(
     var scrubDeltaPx by remember { mutableStateOf(0f) }
     var scrubVisible by remember { mutableStateOf(false) }
     var scrubActive by remember { mutableStateOf(false) }
-    var playerError by remember { mutableStateOf<String?>(null) }
+    var playbackReport by remember { mutableStateOf<PlaybackReport?>(null) }
     var playbackState by remember { mutableStateOf(Player.STATE_IDLE) }
     val renderViewRef = remember { arrayOfNulls<Vr180PlayerView>(1) }
 
@@ -838,13 +843,17 @@ private fun PlayerScreen(
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
-                if (isPlaying) playerError = null
+                if (isPlaying) playbackReport = null
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                playerError = listOfNotNull(error.errorCodeName, error.message)
-                    .joinToString("：")
-                    .ifBlank { "播放失败" }
+                playbackReport = buildPlaybackReport(
+                    title = "播放失败",
+                    summary = error.errorCodeName,
+                    player = player,
+                    fileName = state.item.resource.name,
+                    error = error,
+                )
             }
         }
         player.addListener(listener)
@@ -857,6 +866,28 @@ private fun PlayerScreen(
         while (true) {
             delay(250L)
             if (!scrubActive) currentPositionMs = player.currentPosition
+        }
+    }
+
+    LaunchedEffect(player) {
+        delay(8_000L)
+        val firstPosition = player.currentPosition
+        delay(2_000L)
+        val secondPosition = player.currentPosition
+        if (
+            playbackReport == null &&
+            !player.isPlaying &&
+            player.playbackState != Player.STATE_ENDED &&
+            duration() > 0L &&
+            secondPosition <= firstPosition + 500L
+        ) {
+            playbackReport = buildPlaybackReport(
+                title = "播放未开始",
+                summary = "已获取视频时长，但播放位置没有推进",
+                player = player,
+                fileName = state.item.resource.name,
+                error = null,
+            )
         }
     }
 
@@ -1030,9 +1061,10 @@ private fun PlayerScreen(
             }
         }
 
-        playerError?.let { error ->
+        val report = playbackReport
+        if (report != null) {
             Text(
-                text = error,
+                text = report.summary,
                 color = Color.White,
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier
@@ -1041,14 +1073,113 @@ private fun PlayerScreen(
                     .background(Color.Black.copy(alpha = 0.62f), MaterialTheme.shapes.small)
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             )
-        } ?: if (playbackState == Player.STATE_BUFFERING && currentPositionMs == 0L) {
+        } else if (playbackState == Player.STATE_BUFFERING && currentPositionMs == 0L) {
             CircularProgressIndicator(
                 modifier = Modifier.align(Alignment.Center).size(32.dp),
                 color = Color.White,
                 strokeWidth = 2.dp,
             )
         }
+
+        if (report != null) {
+            PlaybackReportDialog(report = report, onDismiss = { playbackReport = null })
+        }
     }
+}
+
+private data class PlaybackReport(
+    val title: String,
+    val summary: String,
+    val details: String,
+)
+
+@Composable
+private fun PlaybackReportDialog(report: PlaybackReport, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(report.title) },
+        text = {
+            Text(
+                text = report.details,
+                modifier = Modifier
+                    .heightIn(max = 360.dp)
+                    .verticalScroll(rememberScrollState()),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        },
+    )
+}
+
+private fun buildPlaybackReport(
+    title: String,
+    summary: String,
+    player: ExoPlayer,
+    fileName: String,
+    error: PlaybackException?,
+): PlaybackReport {
+    val cause = error?.cause
+    val detailLines = buildList {
+        add("文件：$fileName")
+        add("状态：${playbackStateName(player.playbackState)}")
+        add("isPlaying：${player.isPlaying}")
+        add("playWhenReady：${player.playWhenReady}")
+        add("播放抑制原因：${player.playbackSuppressionReason}")
+        add("当前位置：${formatPlayerTime(player.currentPosition)}")
+        add("总时长：${formatPlayerTime(player.duration)}")
+        add("视频格式：${formatVideoFormat(player)}")
+        add("音频格式：${formatAudioFormat(player)}")
+        if (error != null) {
+            add("错误码：${error.errorCodeName} (${error.errorCode})")
+            add("错误消息：${error.message ?: "无"}")
+            add("异常类型：${error.javaClass.name}")
+            add("根因类型：${cause?.javaClass?.name ?: "无"}")
+            add("根因消息：${cause?.message ?: "无"}")
+        } else {
+            add("诊断：播放器没有抛出异常，但启动后位置没有推进。常见原因是硬件解码不支持 8K/编码格式、音频焦点被系统抑制、或直链缓冲没有进入播放。")
+        }
+    }
+    return PlaybackReport(
+        title = title,
+        summary = error?.let { "${it.errorCodeName}：${it.message ?: summary}" } ?: summary,
+        details = detailLines.joinToString("\n"),
+    )
+}
+
+private fun playbackStateName(state: Int): String = when (state) {
+    Player.STATE_IDLE -> "IDLE"
+    Player.STATE_BUFFERING -> "BUFFERING"
+    Player.STATE_READY -> "READY"
+    Player.STATE_ENDED -> "ENDED"
+    else -> state.toString()
+}
+
+@OptIn(UnstableApi::class)
+private fun formatVideoFormat(player: ExoPlayer): String {
+    val format = player.videoFormat ?: return "未知"
+    val resolution = if (format.width > 0 && format.height > 0) "${format.width}x${format.height}" else null
+    val frameRate = if (format.frameRate > 0f) "%.2ffps".format(format.frameRate) else null
+    return listOfNotNull(format.sampleMimeType, format.codecs, resolution, frameRate)
+        .joinToString(" | ")
+        .ifBlank { format.toString() }
+}
+
+@OptIn(UnstableApi::class)
+private fun formatAudioFormat(player: ExoPlayer): String {
+    val format = player.audioFormat ?: return "未知"
+    val sampleRate = if (format.sampleRate > 0) "${format.sampleRate}Hz" else null
+    val channels = if (format.channelCount > 0) "${format.channelCount}ch" else null
+    return listOfNotNull(format.sampleMimeType, format.codecs, sampleRate, channels)
+        .joinToString(" | ")
+        .ifBlank { format.toString() }
+}
+
+private fun formatPlayerTime(ms: Long): String {
+    return if (ms == C.TIME_UNSET || ms < 0L) "未知" else formatTime(ms)
 }
 
 @Composable
