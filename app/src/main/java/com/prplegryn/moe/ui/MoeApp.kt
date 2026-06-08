@@ -343,15 +343,10 @@ private fun PosterTile(item: LibraryItem, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            AnimatedVisibility(
-                visible = (item.progress?.positionMs ?: 0L) > 0L,
-                modifier = Modifier.align(Alignment.BottomCenter),
-                enter = fadeIn(),
-                exit = fadeOut(),
-            ) {
+            if ((item.progress?.positionMs ?: 0L) > 0L) {
                 LinearProgressIndicator(
                     progress = item.progress?.fraction ?: 0f,
-                    modifier = Modifier.fillMaxWidth().height(3.dp),
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp),
                 )
             }
         }
