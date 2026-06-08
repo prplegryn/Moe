@@ -252,6 +252,7 @@ private fun JsonElement.findCredentialField(keys: Set<String>): JsonElement? {
                 if (found != null) return found
             }
         }
+        else -> Unit
     }
     return null
 }
