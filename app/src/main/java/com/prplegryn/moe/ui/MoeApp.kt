@@ -10,9 +10,11 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +23,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -84,9 +87,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -99,6 +104,8 @@ import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import coil.compose.AsyncImagePainter
+import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 import com.prplegryn.moe.data.model.ActressInfo
 import com.prplegryn.moe.data.model.CloudFile
@@ -328,31 +335,15 @@ private fun PosterTile(item: LibraryItem, onClick: () -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(2f / 3f)
+                .aspectRatio(7f / 10f)
                 .clip(MaterialTheme.shapes.medium)
                 .background(MaterialTheme.colorScheme.surfaceVariant),
         ) {
-            PosterImage(
+            CroppedLibraryPosterImage(
                 url = metadata?.posterUrl ?: metadata?.coverUrl,
-                title = metadata?.title ?: item.resource.name,
+                title = displayTitle(item),
                 modifier = Modifier.fillMaxSize(),
             )
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(6.dp)
-                    .clip(MaterialTheme.shapes.small)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.88f))
-                    .padding(horizontal = 6.dp, vertical = 3.dp),
-            ) {
-                Text(
-                    text = metadata?.contentId ?: item.resource.name.substringBeforeLast('.'),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
             if ((item.progress?.positionMs ?: 0L) > 0L) {
                 LinearProgressIndicator(
                     progress = item.progress?.fraction ?: 0f,
@@ -361,7 +352,7 @@ private fun PosterTile(item: LibraryItem, onClick: () -> Unit) {
             }
         }
         Text(
-            text = metadata?.title ?: item.resource.name,
+            text = displayTitle(item),
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Medium,
             maxLines = 2,
@@ -371,6 +362,55 @@ private fun PosterTile(item: LibraryItem, onClick: () -> Unit) {
             text = artistLine(metadata),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        ContentIdBadge(metadata?.contentId ?: item.resource.name.substringBeforeLast('.'))
+    }
+}
+
+@Composable
+private fun CroppedLibraryPosterImage(
+    url: String?,
+    title: String,
+    modifier: Modifier,
+) {
+    if (url.isNullOrBlank()) {
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            Icon(
+                Icons.Outlined.Movie,
+                contentDescription = null,
+                modifier = Modifier.size(34.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        return
+    }
+    Box(modifier = modifier.clip(MaterialTheme.shapes.medium), contentAlignment = Alignment.CenterEnd) {
+        AsyncImage(
+            model = rememberMediaImageRequest(url),
+            contentDescription = title,
+            contentScale = ContentScale.FillBounds,
+            modifier = Modifier
+                .fillMaxHeight()
+                .aspectRatio(1.48f)
+                .align(Alignment.CenterEnd),
+        )
+    }
+}
+
+@Composable
+private fun ContentIdBadge(text: String) {
+    Box(
+        modifier = Modifier
+            .clip(MaterialTheme.shapes.extraSmall)
+            .background(Color.Black)
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -385,47 +425,54 @@ private fun DetailScreen(
     onBack: () -> Unit,
     onPlay: () -> Unit,
 ) {
-    BackHandler(onBack = onBack)
+    var zoomedPreview by remember { mutableStateOf<String?>(null) }
+    BackHandler(enabled = zoomedPreview != null) { zoomedPreview = null }
+    BackHandler(enabled = zoomedPreview == null, onBack = onBack)
     val metadata = item.metadata
-    Scaffold(
-        contentWindowInsets = WindowInsets.safeDrawing,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = metadata?.title ?: item.resource.name,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Outlined.ArrowBack, contentDescription = "返回")
-                    }
-                },
-            )
-        },
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
-        ) {
-            item {
-                HeroArtwork(item = item, onPlay = onPlay, isLoading = isLoading)
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
+            contentWindowInsets = WindowInsets.safeDrawing,
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = displayTitle(item),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.Outlined.ArrowBack, contentDescription = "返回")
+                        }
+                    },
+                )
+            },
+        ) { padding ->
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentPadding = PaddingValues(bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
+            ) {
+                item {
+                    HeroArtwork(item = item, onPlay = onPlay, isLoading = isLoading)
+                }
+                item {
+                    DetailTitle(item)
+                }
+                item {
+                    PreviewStrip(metadata, onPreviewClick = { zoomedPreview = it })
+                }
+                item {
+                    ActressStrip(metadata?.actresses.orEmpty())
+                }
+                item {
+                    DetailInfo(item)
+                }
             }
-            item {
-                DetailTitle(item)
-            }
-            item {
-                PreviewStrip(metadata)
-            }
-            item {
-                ActressStrip(metadata?.actresses.orEmpty())
-            }
-            item {
-                DetailInfo(item)
-            }
+        }
+        zoomedPreview?.let { url ->
+            ZoomablePreviewOverlay(url = url, onClose = { zoomedPreview = null })
         }
     }
 }
@@ -436,23 +483,14 @@ private fun HeroArtwork(item: LibraryItem, onPlay: () -> Unit, isLoading: Boolea
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(420.dp)
+            .aspectRatio(3f / 2f)
             .background(MaterialTheme.colorScheme.surfaceVariant),
     ) {
         PosterImage(
-            url = metadata?.coverUrl ?: metadata?.posterUrl,
-            title = metadata?.title ?: item.resource.name,
+            url = metadata?.posterUrl ?: metadata?.coverUrl,
+            title = displayTitle(item),
             modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop,
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.62f)),
-                    ),
-                ),
+            contentScale = ContentScale.Fit,
         )
         FloatingActionButton(
             onClick = { if (!isLoading) onPlay() },
@@ -474,7 +512,7 @@ private fun DetailTitle(item: LibraryItem) {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = metadata?.title ?: item.resource.name,
+            text = displayTitle(item),
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.SemiBold,
         )
@@ -494,7 +532,7 @@ private fun DetailTitle(item: LibraryItem) {
 }
 
 @Composable
-private fun PreviewStrip(metadata: MovieMetadata?) {
+private fun PreviewStrip(metadata: MovieMetadata?, onPreviewClick: (String) -> Unit) {
     val previews = metadata?.screenshots.orEmpty().ifEmpty {
         listOfNotNull(metadata?.coverUrl, metadata?.posterUrl)
     }
@@ -511,17 +549,80 @@ private fun PreviewStrip(metadata: MovieMetadata?) {
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             items(previews) { url ->
-                AsyncImage(
-                    model = rememberMediaImageRequest(url),
-                    contentDescription = "预览",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .width(220.dp)
-                        .aspectRatio(16f / 9f)
-                        .clip(MaterialTheme.shapes.medium)
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                )
+                PreviewThumbnail(url = url, onClick = { onPreviewClick(url) })
             }
+        }
+    }
+}
+
+@Composable
+private fun PreviewThumbnail(url: String, onClick: () -> Unit) {
+    val request = rememberMediaImageRequest(url)
+    val painter = rememberAsyncImagePainter(model = request)
+    val state = painter.state
+    val previewHeight = 128.dp
+    val aspect = when (state) {
+        is AsyncImagePainter.State.Success -> {
+            val drawable = state.result.drawable
+            val width = drawable.intrinsicWidth.takeIf { it > 0 } ?: 16
+            val height = drawable.intrinsicHeight.takeIf { it > 0 } ?: 9
+            (width.toFloat() / height.toFloat()).coerceIn(0.55f, 2.4f)
+        }
+        else -> 16f / 9f
+    }
+    val previewWidth = (previewHeight * aspect).coerceIn(82.dp, 260.dp)
+    Box(
+        modifier = Modifier
+            .height(previewHeight)
+            .width(previewWidth)
+            .clip(MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(
+            painter = painter,
+            contentDescription = "预览",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
+}
+
+@Composable
+private fun ZoomablePreviewOverlay(url: String, onClose: () -> Unit) {
+    var scale by remember(url) { mutableStateOf(1f) }
+    var offset by remember(url) { mutableStateOf(Offset.Zero) }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.92f)),
+    ) {
+        AsyncImage(
+            model = rememberMediaImageRequest(url),
+            contentDescription = "预览大图",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp)
+                .pointerInput(url) {
+                    detectTransformGestures { _, pan, zoom, _ ->
+                        scale = (scale * zoom).coerceIn(0.7f, 5f)
+                        offset += pan
+                    }
+                }
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    translationX = offset.x
+                    translationY = offset.y
+                },
+        )
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier.align(Alignment.TopEnd).padding(12.dp),
+        ) {
+            Icon(Icons.Outlined.Close, contentDescription = "关闭", tint = Color.White)
         }
     }
 }
@@ -740,7 +841,7 @@ private fun SettingsScreen(
             MetricCard(
                 title = "资料匹配",
                 value = "导入时自动",
-                support = "优先 JavDB，再回退 JavBus",
+                support = "R18Dev 单一数据源，导入后自动搜刮",
             )
         }
         item {
@@ -888,7 +989,7 @@ private fun PlayerScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = state.item.metadata?.title ?: state.item.resource.name,
+                text = displayTitle(state.item),
                 color = Color.White,
                 style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
@@ -1046,6 +1147,13 @@ private fun artistLine(metadata: MovieMetadata?): String {
         ?.takeIf { it.isNotBlank() }
         ?: metadata?.maker
         ?: "未知艺术家"
+}
+
+private fun displayTitle(item: LibraryItem): String {
+    val metadata = item.metadata
+    return metadata?.originalTitle?.takeIf { it.isNotBlank() }
+        ?: metadata?.title?.takeIf { it.isNotBlank() }
+        ?: item.resource.name.substringBeforeLast('.').ifBlank { item.resource.name }
 }
 
 private fun formatSize(bytes: Long): String {

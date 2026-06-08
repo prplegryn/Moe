@@ -4,8 +4,7 @@ import android.app.Application
 import com.prplegryn.moe.data.local.MoeDatabase
 import com.prplegryn.moe.data.repository.LibraryRepository
 import com.prplegryn.moe.data.scraper.MetadataAggregator
-import com.prplegryn.moe.data.scraper.JavBusScraper
-import com.prplegryn.moe.data.scraper.JavDbScraper
+import com.prplegryn.moe.data.scraper.R18DevScraper
 
 class MoeApplication : Application() {
     lateinit var repository: LibraryRepository
@@ -15,8 +14,7 @@ class MoeApplication : Application() {
         super.onCreate()
         val database = MoeDatabase(this)
         val scrapers = listOf(
-            JavDbScraper(),
-            JavBusScraper(),
+            R18DevScraper(),
         )
         repository = LibraryRepository(
             database = database,

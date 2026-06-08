@@ -88,7 +88,7 @@ class LibraryRepository(
         var saved = 0
         for (item in items) {
             val metadata = item.metadata
-            if (metadata != null && metadata.hasArtwork()) continue
+            if (metadata != null && metadata.sourceName == R18DEV_SOURCE && metadata.hasArtwork()) continue
             val scraped = aggregator.scrape(item.resource) ?: continue
             withContext(Dispatchers.IO) { database.saveMetadata(scraped) }
             saved++
@@ -183,3 +183,5 @@ private fun String.isVideoFileName(): Boolean {
 private fun MovieMetadata.hasArtwork(): Boolean {
     return !posterUrl.isNullOrBlank() && !coverUrl.isNullOrBlank() && screenshots.isNotEmpty()
 }
+
+private const val R18DEV_SOURCE = "r18dev"
