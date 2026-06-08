@@ -17,13 +17,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -392,14 +392,15 @@ private fun CroppedLibraryPosterImage(
         }
         return
     }
-    Box(modifier = modifier.clip(MaterialTheme.shapes.medium), contentAlignment = Alignment.CenterEnd) {
+    BoxWithConstraints(modifier = modifier.clip(MaterialTheme.shapes.medium), contentAlignment = Alignment.CenterEnd) {
+        val imageWidth = maxHeight * 1.48f
         AsyncImage(
             model = rememberMediaImageRequest(url),
             contentDescription = title,
             contentScale = ContentScale.FillBounds,
             modifier = Modifier
-                .fillMaxHeight()
-                .aspectRatio(1.48f)
+                .height(maxHeight)
+                .width(imageWidth)
                 .align(Alignment.CenterEnd),
         )
     }
@@ -872,7 +873,7 @@ private fun SettingsScreen(
             MetricCard(
                 title = "资料匹配",
                 value = "导入时自动",
-                support = "R18Dev 单一数据源，导入后自动搜刮",
+                support = "Libredmm 单一数据源，导入后自动搜刮",
             )
         }
         item {
@@ -1217,6 +1218,7 @@ private const val MEDIA_IMAGE_USER_AGENT =
 private fun imageReferer(url: String): String {
     val lower = url.lowercase()
     return when {
+        "libredmm" in lower -> "https://www.libredmm.com/"
         "javbus" in lower -> "https://www.javbus.com/"
         "javdb" in lower || "jdbstatic" in lower -> "https://javdb.com/"
         "dmm.co.jp" in lower || "dmm.com" in lower -> "https://www.dmm.co.jp/"

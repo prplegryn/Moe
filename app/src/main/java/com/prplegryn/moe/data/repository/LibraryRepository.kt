@@ -122,7 +122,7 @@ class LibraryRepository(
         var saved = 0
         for (item in items) {
             val metadata = item.metadata
-            if (metadata != null && metadata.sourceName == R18DEV_SOURCE && metadata.hasArtwork()) continue
+            if (metadata != null && metadata.sourceName == LIBREDMM_SOURCE && metadata.hasArtwork()) continue
             val scraped = aggregator.scrape(item.resource) ?: continue
             withContext(Dispatchers.IO) { database.saveMetadata(scraped) }
             saved++
@@ -218,7 +218,7 @@ private fun MovieMetadata.hasArtwork(): Boolean {
     return !posterUrl.isNullOrBlank() && !coverUrl.isNullOrBlank() && screenshots.isNotEmpty()
 }
 
-private const val R18DEV_SOURCE = "r18dev"
+private const val LIBREDMM_SOURCE = "libredmm"
 
 private fun normalizeImportedExpiry(value: Long?): Long? {
     if (value == null || value <= 0L) return null

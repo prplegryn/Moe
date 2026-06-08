@@ -25,7 +25,7 @@ interface MetadataScraper {
 
 class MetadataAggregator(
     private val scrapers: List<MetadataScraper>,
-    private val priority: List<String> = listOf("r18dev"),
+    private val priority: List<String> = listOf("libredmm"),
 ) {
     suspend fun scrape(resource: MediaResource): MovieMetadata? {
         val query = MovieIdParser.extract(resource.name)
