@@ -14,12 +14,21 @@ import com.prplegryn.moe.data.scraper.MetadataAggregator
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.longOrNull
 
 class LibraryRepository(
     private val database: MoeDatabase,
     private val aggregator: MetadataAggregator,
 ) {
     private var guangyaClient = createClient()
+    private val credentialJson = Json { ignoreUnknownKeys = true }
 
     fun snapshot(): LibrarySnapshot = database.snapshot()
 
@@ -39,6 +48,31 @@ class LibraryRepository(
     fun logout() {
         database.clearAuth()
         guangyaClient = createClient()
+    }
+
+    fun importAuthJson(rawJson: String): CloudAuthState {
+        val root = runCatching { credentialJson.parseToJsonElement(rawJson).jsonObject }
+            .getOrElse { throw IOException("凭据 JSON 格式不正确") }
+        val refreshToken = root.deepString("refresh_token", "refreshToken")
+        val accessToken = root.deepString("access_token", "accessToken").orEmpty()
+        if (accessToken.isBlank() && refreshToken.isNullOrBlank()) {
+            throw IOException("凭据缺少 access_token 或 refresh_token")
+        }
+        val expiresAtMillis = normalizeImportedExpiry(
+            root.deepLong("expires_at_millis", "expiresAtMillis", "expires_at", "expiresAt"),
+        ) ?: root.deepLong("expires_in", "expiresIn")?.let { System.currentTimeMillis() + it * 1000L }
+        val auth = CloudAuthState(
+            accessToken = accessToken,
+            refreshToken = refreshToken,
+            expiresAtMillis = expiresAtMillis ?: if (accessToken.isBlank()) 0L else null,
+            deviceId = root.deepString("device_id", "deviceId", "did")
+                ?: database.getAuth()?.deviceId
+                ?: throw IOException("凭据缺少 device_id"),
+            phone = root.deepString("phone", "username", "mobile"),
+        )
+        database.saveAuth(auth)
+        guangyaClient = createClient()
+        return auth
     }
 
     suspend fun prepareSmsLogin(phone: String): LoginPreparation {
@@ -185,3 +219,39 @@ private fun MovieMetadata.hasArtwork(): Boolean {
 }
 
 private const val R18DEV_SOURCE = "r18dev"
+
+private fun normalizeImportedExpiry(value: Long?): Long? {
+    if (value == null || value <= 0L) return null
+    return if (value < 10_000_000_000L) value * 1000L else value
+}
+
+private fun JsonObject.deepString(vararg keys: String): String? {
+    val found = findCredentialField(keys.map { it.lowercase() }.toSet()) as? JsonPrimitive ?: return null
+    return found.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
+}
+
+private fun JsonObject.deepLong(vararg keys: String): Long? {
+    val found = findCredentialField(keys.map { it.lowercase() }.toSet()) as? JsonPrimitive ?: return null
+    return found.longOrNull ?: found.contentOrNull?.trim()?.toLongOrNull()
+}
+
+private fun JsonElement.findCredentialField(keys: Set<String>): JsonElement? {
+    when (this) {
+        is JsonObject -> {
+            for ((key, value) in this) {
+                if (key.lowercase() in keys) return value
+            }
+            for (value in values) {
+                val found = value.findCredentialField(keys)
+                if (found != null) return found
+            }
+        }
+        is JsonArray -> {
+            for (value in this) {
+                val found = value.findCredentialField(keys)
+                if (found != null) return found
+            }
+        }
+    }
+    return null
+}

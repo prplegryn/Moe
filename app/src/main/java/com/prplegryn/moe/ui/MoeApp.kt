@@ -157,8 +157,10 @@ fun MoeApp(viewModel: MoeViewModel) {
         onRefresh = viewModel::refresh,
         onPhone = viewModel::updatePhone,
         onCode = viewModel::updateCode,
+        onAuthJson = viewModel::updateAuthJson,
         onSendSms = viewModel::sendSms,
         onLogin = viewModel::completeLogin,
+        onImportAuth = viewModel::importAuthJson,
         onLogout = viewModel::logout,
         onImport = viewModel::importCloudVideos,
         onOpenDetails = viewModel::openDetails,
@@ -178,8 +180,10 @@ private fun MoeScaffold(
     onRefresh: () -> Unit,
     onPhone: (String) -> Unit,
     onCode: (String) -> Unit,
+    onAuthJson: (String) -> Unit,
     onSendSms: () -> Unit,
     onLogin: () -> Unit,
+    onImportAuth: () -> Unit,
     onLogout: () -> Unit,
     onImport: () -> Unit,
     onOpenDetails: (LibraryItem) -> Unit,
@@ -248,8 +252,10 @@ private fun MoeScaffold(
                     state = state,
                     onPhone = onPhone,
                     onCode = onCode,
+                    onAuthJson = onAuthJson,
                     onSendSms = onSendSms,
                     onLogin = onLogin,
+                    onImportAuth = onImportAuth,
                     onLogout = onLogout,
                     onImport = onImport,
                 )
@@ -713,8 +719,10 @@ private fun CloudScreen(
     state: MoeUiState,
     onPhone: (String) -> Unit,
     onCode: (String) -> Unit,
+    onAuthJson: (String) -> Unit,
     onSendSms: () -> Unit,
     onLogin: () -> Unit,
+    onImportAuth: () -> Unit,
     onLogout: () -> Unit,
     onImport: () -> Unit,
 ) {
@@ -742,10 +750,11 @@ private fun CloudScreen(
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                         )
-                        FilledTonalButton(onClick = onSendSms, enabled = !state.isLoading) {
+                        val smsSent = state.smsRequest != null
+                        FilledTonalButton(onClick = onSendSms, enabled = !state.isLoading && !smsSent) {
                             Icon(Icons.Outlined.Login, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("发送验证码")
+                            Text(if (smsSent) "验证码已发送" else "发送验证码")
                         }
                         OutlinedTextField(
                             value = state.code,
@@ -757,6 +766,28 @@ private fun CloudScreen(
                         )
                         Button(onClick = onLogin, enabled = !state.isLoading && state.smsRequest != null) {
                             Text("登录")
+                        }
+                        Text(
+                            text = "已有凭据",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        OutlinedTextField(
+                            value = state.authJsonDraft,
+                            onValueChange = onAuthJson,
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("凭据 JSON") },
+                            minLines = 3,
+                            maxLines = 6,
+                            enabled = !state.isLoading,
+                        )
+                        OutlinedButton(
+                            onClick = onImportAuth,
+                            enabled = !state.isLoading && state.authJsonDraft.isNotBlank(),
+                        ) {
+                            Icon(Icons.Outlined.Save, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("导入凭据")
                         }
                     } else {
                         Text(

@@ -27,11 +27,21 @@ class MoeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updatePhone(value: String) {
-        _uiState.update { it.copy(phone = value) }
+        _uiState.update { state ->
+            if (isSamePhone(state.phone, value)) {
+                state.copy(phone = value)
+            } else {
+                state.copy(phone = value, code = "", smsRequest = null, captchaUrl = null)
+            }
+        }
     }
 
     fun updateCode(value: String) {
         _uiState.update { it.copy(code = value) }
+    }
+
+    fun updateAuthJson(value: String) {
+        _uiState.update { it.copy(authJsonDraft = value) }
     }
 
     fun clearMessage() {
@@ -121,8 +131,14 @@ class MoeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendSms() = launchBusy {
-        val phone = uiState.value.phone.trim()
+        val state = uiState.value
+        val phone = state.phone.trim()
         require(phone.isNotBlank()) { "请输入手机号" }
+        val existing = state.smsRequest
+        if (existing != null && isSamePhone(existing.phone, phone)) {
+            _uiState.update { it.copy(message = "验证码已发送，请直接输入收到的验证码") }
+            return@launchBusy
+        }
         val preparation = repository.prepareSmsLogin(phone)
         _uiState.update {
             it.copy(
@@ -149,6 +165,22 @@ class MoeViewModel(application: Application) : AndroidViewModel(application) {
                 captchaUrl = null,
                 snapshot = repository.snapshot(),
                 message = "已登录光鸭",
+            )
+        }
+    }
+
+    fun importAuthJson() = launchBusy {
+        val rawJson = uiState.value.authJsonDraft.trim()
+        require(rawJson.isNotBlank()) { "请粘贴光鸭凭据 JSON" }
+        repository.importAuthJson(rawJson)
+        _uiState.update {
+            it.copy(
+                authJsonDraft = "",
+                code = "",
+                smsRequest = null,
+                captchaUrl = null,
+                snapshot = repository.snapshot(),
+                message = "已导入光鸭登录凭据",
             )
         }
     }
@@ -219,7 +251,7 @@ class MoeViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(isLoading = true, message = null) }
             runCatching { block() }
                 .onFailure { error ->
-                    _uiState.update { it.copy(message = error.message ?: "操作失败") }
+                    _uiState.update { it.copy(message = error.userFacingMessage()) }
                 }
             _uiState.update { it.copy(isLoading = false) }
         }
@@ -239,6 +271,7 @@ data class MoeUiState(
     val message: String? = null,
     val phone: String = "",
     val code: String = "",
+    val authJsonDraft: String = "",
     val importPathDraft: String = "",
     val selectedItemId: Long? = null,
     val directoryPicker: DirectoryPickerState = DirectoryPickerState(),
@@ -268,4 +301,24 @@ data class DirectoryPickerState(
 private fun List<DirectoryCrumb>.toImportPath(): String {
     val parts = drop(1).map { it.name.trim() }.filter { it.isNotBlank() }
     return if (parts.isEmpty()) "" else "/" + parts.joinToString("/")
+}
+
+private fun isSamePhone(left: String, right: String): Boolean {
+    val leftKey = phoneKey(left)
+    val rightKey = phoneKey(right)
+    return leftKey.isNotBlank() && leftKey == rightKey
+}
+
+private fun phoneKey(value: String): String {
+    val digits = value.filter { it.isDigit() }
+    return if (digits.length > 11 && digits.startsWith("86")) digits.drop(2) else digits
+}
+
+private fun Throwable.userFacingMessage(): String {
+    val raw = message ?: return "操作失败"
+    return when {
+        "HTTP 429" in raw || "resource_exhausted" in raw || "text message per day" in raw ->
+            "今日短信验证码额度已用完（同一手机号每天最多 10 条）。如果已经收到验证码，请直接输入后登录；否则需要明天再试。"
+        else -> raw
+    }
 }
