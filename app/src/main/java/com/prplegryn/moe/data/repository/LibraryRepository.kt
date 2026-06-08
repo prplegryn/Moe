@@ -34,7 +34,14 @@ class LibraryRepository(
         val request = if (token.isNullOrBlank()) {
             null
         } else {
-            guangyaClient.loginSmsSend(phone, token)
+            val signInCaptcha = guangyaClient.loginSignInCaptcha(phone)
+            val signInToken = signInCaptcha.captchaToken
+                ?: throw IOException(signInCaptcha.verificationUrl ?: "光鸭登录需要额外验证码校验")
+            guangyaClient.loginSmsSend(
+                phone = phone,
+                captchaToken = token,
+                signInCaptchaToken = signInToken,
+            )
         }
         return LoginPreparation(captcha = captcha, request = request)
     }
@@ -42,10 +49,10 @@ class LibraryRepository(
     suspend fun completeSmsLogin(request: SmsRequest, code: String): CloudAuthState {
         val verificationToken = guangyaClient.loginSmsVerify(request.verificationId, code)
         return guangyaClient.loginSmsSignIn(
-            phone = request.phone,
+            username = request.username,
             verificationCode = code,
             verificationToken = verificationToken,
-            captchaToken = request.captchaToken,
+            captchaToken = request.signInCaptchaToken,
         )
     }
 

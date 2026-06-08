@@ -53,13 +53,37 @@ class GuangyaClient(
         get() = authState?.deviceId ?: generateDid()
 
     suspend fun loginSmsInit(phone: String, captchaToken: String? = null): SmsCaptcha {
+        val identity = normalizePhone(phone)
+        return initCaptcha(
+            action = "POST:/v1/auth/verification",
+            meta = buildJsonObject {
+                put("phone_number", identity.verificationPhoneNumber)
+            },
+            captchaToken = captchaToken,
+        )
+    }
+
+    suspend fun loginSignInCaptcha(phone: String, captchaToken: String? = null): SmsCaptcha {
+        val identity = normalizePhone(phone)
+        return initCaptcha(
+            action = "POST:/v1/auth/signin",
+            meta = buildJsonObject {
+                put("username", identity.username)
+            },
+            captchaToken = captchaToken,
+        )
+    }
+
+    private suspend fun initCaptcha(
+        action: String,
+        meta: JsonObject,
+        captchaToken: String? = null,
+    ): SmsCaptcha {
         val body = buildJsonObject {
             put("client_id", CLIENT_ID)
-            put("action", "POST:/v1/auth/verification")
+            put("action", action)
             put("device_id", deviceId)
-            putJsonObject("meta") {
-                put("phone_number", phone)
-            }
+            put("meta", meta)
             captchaToken?.let { put("captcha_token", it) }
         }
         val result = postPublicJson(
@@ -73,11 +97,17 @@ class GuangyaClient(
         )
     }
 
-    suspend fun loginSmsSend(phone: String, captchaToken: String, target: String = "ANY"): SmsRequest {
+    suspend fun loginSmsSend(
+        phone: String,
+        captchaToken: String,
+        signInCaptchaToken: String,
+        target: String = "ANY",
+    ): SmsRequest {
+        val identity = normalizePhone(phone)
         val result = postPublicJson(
             url = "https://account.guangyapan.com/v1/auth/verification",
             body = buildJsonObject {
-                put("phone_number", phone)
+                put("phone_number", identity.verificationPhoneNumber)
                 put("target", target)
                 put("client_id", CLIENT_ID)
             },
@@ -86,8 +116,10 @@ class GuangyaClient(
         val verificationId = result.deepString("verification_id", "verificationId")
             ?: throw IOException("Guangya SMS send did not return verification_id")
         return SmsRequest(
-            phone = phone,
+            phone = identity.displayPhone,
+            username = identity.username,
             captchaToken = captchaToken,
+            signInCaptchaToken = signInCaptchaToken,
             verificationId = verificationId,
         )
     }
@@ -107,7 +139,7 @@ class GuangyaClient(
     }
 
     suspend fun loginSmsSignIn(
-        phone: String,
+        username: String,
         verificationCode: String,
         verificationToken: String,
         captchaToken: String,
@@ -117,12 +149,12 @@ class GuangyaClient(
             body = buildJsonObject {
                 put("verification_code", verificationCode)
                 put("verification_token", verificationToken)
-                put("username", phone)
+                put("username", username)
                 put("client_id", CLIENT_ID)
             },
             headers = accountHeaders(extra = mapOf("x-captcha-token" to captchaToken)),
         )
-        return updateAuthFromTokenResult(result, phone)
+        return updateAuthFromTokenResult(result, username)
     }
 
     suspend fun listVideos(page: Int = 0, pageSize: Int = 100): List<CloudFile> {
@@ -310,6 +342,30 @@ class GuangyaClient(
         return md5(raw.toByteArray())
     }
 
+    private fun normalizePhone(input: String): PhoneIdentity {
+        val trimmed = input.trim()
+        val compact = trimmed.replace(Regex("""[\s-]"""), "")
+        val digits = compact.filter { it.isDigit() }
+        val national = when {
+            compact.startsWith("+86") && digits.startsWith("86") && digits.length >= 13 -> digits.drop(2)
+            !compact.startsWith("+") && digits.startsWith("86") && digits.length == 13 -> digits.drop(2)
+            digits.length == 11 -> digits
+            else -> digits
+        }
+        if (national.length == 11) {
+            return PhoneIdentity(
+                displayPhone = national,
+                username = national,
+                verificationPhoneNumber = "+86 $national",
+            )
+        }
+        return PhoneIdentity(
+            displayPhone = trimmed,
+            username = compact.ifBlank { trimmed },
+            verificationPhoneNumber = compact.ifBlank { trimmed },
+        )
+    }
+
     private fun generateTraceparent(): String = "00-${randomHex(16)}-${randomHex(8)}-01"
 
     private fun randomHex(byteCount: Int): String {
@@ -322,6 +378,12 @@ class GuangyaClient(
         val digest = MessageDigest.getInstance("MD5").digest(bytes)
         return digest.joinToString("") { "%02x".format(it) }
     }
+
+    private data class PhoneIdentity(
+        val displayPhone: String,
+        val username: String,
+        val verificationPhoneNumber: String,
+    )
 
     private data class JsonResponse(val statusCode: Int, val body: JsonObject)
 
