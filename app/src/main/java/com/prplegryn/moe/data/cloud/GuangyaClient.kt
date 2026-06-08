@@ -383,6 +383,7 @@ private fun JsonObject.findArray(vararg keys: String): JsonArray? {
         when (value) {
             is JsonArray -> return value
             is JsonObject -> value.findArray("list", "files", "items", "records", "rows")?.let { return it }
+            else -> Unit
         }
     }
     for (value in values) {
