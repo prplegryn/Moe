@@ -242,7 +242,7 @@ class GuangyaClient(
         return try {
             block()
         } catch (error: IOException) {
-            throw IOException("$label失败：${error.message}", error)
+            throw IOException("${label}失败：${error.message}", error)
         }
     }
 
@@ -367,10 +367,11 @@ class GuangyaClient(
             else -> digits
         }
         if (national.length == 11) {
+            val international = "+86 $national"
             return PhoneIdentity(
                 displayPhone = national,
-                username = national,
-                verificationPhoneNumber = "+86 $national",
+                username = international,
+                verificationPhoneNumber = international,
             )
         }
         return PhoneIdentity(
