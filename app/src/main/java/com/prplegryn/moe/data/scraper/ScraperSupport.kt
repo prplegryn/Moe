@@ -157,10 +157,13 @@ internal fun standardHtmlHeaders(extra: Map<String, String> = emptyMap()): Heade
         .add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
         .add("Accept-Language", "ja,en-US;q=0.8,en;q=0.6,zh-CN;q=0.5")
         .add("Cache-Control", "no-cache")
-        .add("User-Agent", "Moe/0.1 Android; Javinizer-compatible metadata scraper")
+        .add("User-Agent", BROWSER_USER_AGENT)
     extra.forEach { (key, value) -> builder.add(key, value) }
     return builder.build()
 }
+
+internal const val BROWSER_USER_AGENT =
+    "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
 
 internal fun urlEncode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())
 

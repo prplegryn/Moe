@@ -130,10 +130,12 @@ class MoeDatabase(context: Context) : SQLiteOpenHelper(context, "moe.db", null, 
 
     fun getSettings(): AppSettings = AppSettings(
         importPath = getSetting("import_path").orEmpty(),
+        importFolderId = getSetting("import_folder_id")?.takeIf { it.isNotBlank() },
     )
 
-    fun saveImportPath(path: String) {
+    fun saveImportPath(path: String, folderId: String?) {
         saveSetting("import_path", path.trim())
+        saveSetting("import_folder_id", folderId.orEmpty())
     }
 
     private fun getSetting(key: String): String? = readableDatabase.query(

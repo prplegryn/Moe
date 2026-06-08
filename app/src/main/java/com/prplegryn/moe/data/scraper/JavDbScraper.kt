@@ -96,15 +96,33 @@ class JavDbScraper(
             }
         }
         rating = parsedRating ?: rating
+        if (actresses.isEmpty()) {
+            actresses = extractActressesFromDocument(doc)
+        }
 
         val cover = extractFirstImage(
             doc,
+            "meta[property=og:image]",
+            "meta[name=twitter:image]",
             ".column-video-cover img.video-cover",
             ".column-video-cover img",
+            ".column-video-cover a[href]",
+            "img.video-cover",
             ".video-meta-panel img.video-cover",
+            "img[src*=cover]",
+            "img[data-src*=cover]",
+            "img[src*=jacket]",
+            "img[data-src*=jacket]",
         )
-        val screenshots = doc.select(".tile-images img, .preview-images img, a[href$=.jpg] img")
-            .mapNotNull { firstUrl(it) }
+        val screenshots = doc
+            .select(
+                ".tile-images a[href], .tile-images img, " +
+                    ".preview-images a[href], .preview-images img, " +
+                    "a[href$=.jpg], a[href$=.jpeg], a[href$=.png], " +
+                    "img[data-src$=.jpg], img[data-original$=.jpg]",
+            )
+            .mapNotNull { firstUrl(it, imageAttrs) }
+            .filter { it != cover }
             .distinct()
 
         return ScraperResult(
@@ -134,7 +152,7 @@ class JavDbScraper(
 
     private fun extractFirstImage(doc: Document, vararg selectors: String): String? {
         for (selector in selectors) {
-            val url = firstUrl(doc.selectFirst(selector))
+            val url = firstUrl(doc.selectFirst(selector), imageAttrs)
             if (!url.isNullOrBlank()) return url
         }
         return null
@@ -154,9 +172,25 @@ class JavDbScraper(
         }
 
     private fun extractActresses(element: Element): List<ActressInfo> = element.select("a")
-        .mapNotNull { link ->
-            val name = clean(link.selectFirst("img")?.attr("title")).ifBlank { clean(link.text()) }
-            if (name.isBlank()) null else ActressInfo(name = name, thumbUrl = firstUrl(link.selectFirst("img")))
-        }
+        .mapNotNull(::actressFromLink)
         .distinctBy { it.name }
+
+    private fun extractActressesFromDocument(doc: Document): List<ActressInfo> = doc
+        .select(".actors a, .actor-section a, .star-name a, a[href*='/actors/'], a[href*='/actresses/']")
+        .mapNotNull(::actressFromLink)
+        .distinctBy { it.name }
+
+    private fun actressFromLink(link: Element): ActressInfo? {
+        val img = link.selectFirst("img")
+        val name = clean(img?.attr("title"))
+            .ifBlank { clean(img?.attr("alt")) }
+            .ifBlank { clean(link.attr("title")) }
+            .ifBlank { clean(link.text()) }
+        if (name.isBlank()) return null
+        return ActressInfo(name = name, thumbUrl = firstUrl(img, imageAttrs))
+    }
+
+    private companion object {
+        val imageAttrs = listOf("href", "src", "data-src", "data-original", "content")
+    }
 }

@@ -100,8 +100,14 @@ class JavBusScraper(
             posterUrl = cover,
             coverUrl = cover,
             trailerUrl = firstUrl(doc.selectFirst("a[href*=sample], a[href*=trailer], video source")),
-            screenshots = doc.select("#sample-waterfall img, .sample-box img, a.sample-box")
-                .mapNotNull { firstUrl(it) }
+            screenshots = doc
+                .select(
+                    "#sample-waterfall a[href], #sample-waterfall img, " +
+                        ".sample-box[href], .sample-box img, " +
+                        "a[href$=.jpg], a[href$=.jpeg], a[href$=.png]",
+                )
+                .mapNotNull { firstUrl(it, imageAttrs) }
+                .filter { it != cover }
                 .distinct(),
         )
     }
@@ -145,7 +151,7 @@ class JavBusScraper(
             val img = link.selectFirst("img")
             add(
                 name = clean(img?.attr("title")).ifBlank { clean(link.attr("title")) }.ifBlank { clean(link.text()) },
-                thumb = firstUrl(img),
+                thumb = firstUrl(img, imageAttrs),
             )
         }
         doc.select("#info a[href*='/star/'], .info a[href*='/star/']").forEach { link ->
@@ -172,7 +178,7 @@ class JavBusScraper(
         for (selector in selectors) {
             val node = doc.selectFirst(selector) ?: continue
             val attr = if (selector.contains("[href]")) "href" else "src"
-            val url = firstUrl(node, listOf(attr, "data-src", "data-original"))
+            val url = firstUrl(node, listOf(attr, "data-src", "data-original", "content"))
             if (!url.isNullOrBlank()) return url.ifBlank { sourceUrl }
         }
         return null
@@ -183,5 +189,9 @@ class JavBusScraper(
         return selectors.firstNotNullOfOrNull { selector ->
             clean(doc.selectFirst(selector)?.text()).ifBlank { null }
         }
+    }
+
+    private companion object {
+        val imageAttrs = listOf("href", "src", "data-src", "data-original", "content")
     }
 }

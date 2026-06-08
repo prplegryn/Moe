@@ -136,4 +136,5 @@ data class LibrarySnapshot(
 
 data class AppSettings(
     val importPath: String = "",
+    val importFolderId: String? = null,
 )

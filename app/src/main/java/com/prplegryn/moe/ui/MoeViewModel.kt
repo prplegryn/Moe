@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.prplegryn.moe.MoeApplication
+import com.prplegryn.moe.data.model.CloudFile
 import com.prplegryn.moe.data.model.LibraryItem
 import com.prplegryn.moe.data.model.LibrarySnapshot
 import com.prplegryn.moe.data.model.SmsRequest
@@ -55,13 +56,68 @@ class MoeViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update { it.copy(selectedItemId = null) }
     }
 
-    fun updateImportPath(value: String) {
-        _uiState.update { it.copy(importPathDraft = value) }
+    fun saveImportPath() {
+        val state = uiState.value
+        val selectedFolderId = if (state.directoryPicker.isLoaded) {
+            state.directoryPicker.currentFolderId
+        } else {
+            state.snapshot.settings.importFolderId
+        }
+        repository.saveImportPath(
+            path = state.importPathDraft,
+            folderId = selectedFolderId,
+        )
+        _uiState.update { it.copy(snapshot = repository.snapshot(), message = "导入路径已保存") }
     }
 
-    fun saveImportPath() {
-        repository.saveImportPath(uiState.value.importPathDraft)
-        _uiState.update { it.copy(snapshot = repository.snapshot(), message = "导入路径已保存") }
+    fun refreshDirectoryPicker() = launchBusy {
+        val folders = repository.listImportDirectories(parentId = null)
+        _uiState.update {
+            it.copy(
+                importPathDraft = "",
+                directoryPicker = DirectoryPickerState(
+                    currentFolderId = null,
+                    crumbs = listOf(DirectoryCrumb("根目录", null)),
+                    folders = folders,
+                    isLoaded = true,
+                ),
+                message = "目录已刷新",
+            )
+        }
+    }
+
+    fun openDirectory(folder: CloudFile) = launchBusy {
+        val folders = repository.listImportDirectories(parentId = folder.fileId)
+        val nextCrumbs = uiState.value.directoryPicker.crumbs + DirectoryCrumb(folder.name, folder.fileId)
+        _uiState.update {
+            it.copy(
+                importPathDraft = nextCrumbs.toImportPath(),
+                directoryPicker = it.directoryPicker.copy(
+                    currentFolderId = folder.fileId,
+                    crumbs = nextCrumbs,
+                    folders = folders,
+                    isLoaded = true,
+                ),
+            )
+        }
+    }
+
+    fun selectDirectoryCrumb(index: Int) = launchBusy {
+        val current = uiState.value.directoryPicker.crumbs
+        val nextCrumbs = current.take(index + 1).ifEmpty { listOf(DirectoryCrumb("根目录", null)) }
+        val target = nextCrumbs.last()
+        val folders = repository.listImportDirectories(parentId = target.folderId)
+        _uiState.update {
+            it.copy(
+                importPathDraft = nextCrumbs.toImportPath(),
+                directoryPicker = it.directoryPicker.copy(
+                    currentFolderId = target.folderId,
+                    crumbs = nextCrumbs,
+                    folders = folders,
+                    isLoaded = true,
+                ),
+            )
+        }
     }
 
     fun sendSms() = launchBusy {
@@ -185,6 +241,7 @@ data class MoeUiState(
     val code: String = "",
     val importPathDraft: String = "",
     val selectedItemId: Long? = null,
+    val directoryPicker: DirectoryPickerState = DirectoryPickerState(),
     val smsRequest: SmsRequest? = null,
     val captchaUrl: String? = null,
     val activePlayer: PlayerUiState? = null,
@@ -195,3 +252,20 @@ data class PlayerUiState(
     val url: String,
     val startPositionMs: Long,
 )
+
+data class DirectoryCrumb(
+    val name: String,
+    val folderId: String?,
+)
+
+data class DirectoryPickerState(
+    val currentFolderId: String? = null,
+    val crumbs: List<DirectoryCrumb> = listOf(DirectoryCrumb("根目录", null)),
+    val folders: List<CloudFile> = emptyList(),
+    val isLoaded: Boolean = false,
+)
+
+private fun List<DirectoryCrumb>.toImportPath(): String {
+    val parts = drop(1).map { it.name.trim() }.filter { it.isNotBlank() }
+    return if (parts.isEmpty()) "" else "/" + parts.joinToString("/")
+}

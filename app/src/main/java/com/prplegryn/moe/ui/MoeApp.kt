@@ -43,6 +43,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Login
 import androidx.compose.material.icons.outlined.Logout
 import androidx.compose.material.icons.outlined.Movie
@@ -98,6 +99,9 @@ import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.prplegryn.moe.data.model.ActressInfo
+import com.prplegryn.moe.data.model.CloudFile
 import com.prplegryn.moe.data.model.LibraryItem
 import com.prplegryn.moe.data.model.MovieMetadata
 import com.prplegryn.moe.data.model.WatchProgress
@@ -151,8 +155,10 @@ fun MoeApp(viewModel: MoeViewModel) {
         onLogout = viewModel::logout,
         onImport = viewModel::importCloudVideos,
         onOpenDetails = viewModel::openDetails,
-        onImportPath = viewModel::updateImportPath,
         onSaveImportPath = viewModel::saveImportPath,
+        onRefreshDirectories = viewModel::refreshDirectoryPicker,
+        onOpenDirectory = viewModel::openDirectory,
+        onSelectDirectoryCrumb = viewModel::selectDirectoryCrumb,
     )
 }
 
@@ -170,8 +176,10 @@ private fun MoeScaffold(
     onLogout: () -> Unit,
     onImport: () -> Unit,
     onOpenDetails: (LibraryItem) -> Unit,
-    onImportPath: (String) -> Unit,
     onSaveImportPath: () -> Unit,
+    onRefreshDirectories: () -> Unit,
+    onOpenDirectory: (CloudFile) -> Unit,
+    onSelectDirectoryCrumb: (Int) -> Unit,
 ) {
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
@@ -240,8 +248,10 @@ private fun MoeScaffold(
                 )
                 MoeTab.Settings -> SettingsScreen(
                     state = state,
-                    onImportPath = onImportPath,
                     onSaveImportPath = onSaveImportPath,
+                    onRefreshDirectories = onRefreshDirectories,
+                    onOpenDirectory = onOpenDirectory,
+                    onSelectDirectoryCrumb = onSelectDirectoryCrumb,
                 )
             }
             BusyOverlay(state.isLoading)
@@ -411,6 +421,9 @@ private fun DetailScreen(
                 PreviewStrip(metadata)
             }
             item {
+                ActressStrip(metadata?.actresses.orEmpty())
+            }
+            item {
                 DetailInfo(item)
             }
         }
@@ -499,7 +512,7 @@ private fun PreviewStrip(metadata: MovieMetadata?) {
         ) {
             items(previews) { url ->
                 AsyncImage(
-                    model = url,
+                    model = rememberMediaImageRequest(url),
                     contentDescription = "预览",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
@@ -508,6 +521,60 @@ private fun PreviewStrip(metadata: MovieMetadata?) {
                         .clip(MaterialTheme.shapes.medium)
                         .background(MaterialTheme.colorScheme.surfaceVariant),
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActressStrip(actresses: List<ActressInfo>) {
+    if (actresses.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            text = "演员",
+            modifier = Modifier.padding(horizontal = 18.dp),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 18.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(actresses) { actress ->
+                Column(
+                    modifier = Modifier.width(72.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (actress.thumbUrl.isNullOrBlank()) {
+                            Text(
+                                text = actress.name.take(1),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            AsyncImage(
+                                model = rememberMediaImageRequest(actress.thumbUrl),
+                                contentDescription = actress.name,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
+                    Text(
+                        text = actress.name,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
@@ -625,8 +692,10 @@ private fun CloudScreen(
 @Composable
 private fun SettingsScreen(
     state: MoeUiState,
-    onImportPath: (String) -> Unit,
     onSaveImportPath: () -> Unit,
+    onRefreshDirectories: () -> Unit,
+    onOpenDirectory: (CloudFile) -> Unit,
+    onSelectDirectoryCrumb: (Int) -> Unit,
 ) {
     LazyColumn(
         contentPadding = PaddingValues(18.dp),
@@ -641,24 +710,29 @@ private fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth().padding(18.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Icon(Icons.Outlined.Folder, contentDescription = null)
-                        Text("导入路径", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    }
-                    OutlinedTextField(
-                        value = state.importPathDraft,
-                        onValueChange = onImportPath,
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("光鸭目录路径") },
-                        placeholder = { Text("/Movies/JAV") },
-                        singleLine = true,
-                        supportingText = { Text("留空表示扫描全盘视频；填写目录路径会递归导入该路径下的视频") },
-                    )
-                    Button(onClick = onSaveImportPath, enabled = !state.isLoading) {
-                        Icon(Icons.Outlined.Save, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("保存路径")
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(Icons.Outlined.Folder, contentDescription = null)
+                        Text(
+                            "导入路径",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        IconButton(onClick = onRefreshDirectories, enabled = !state.isLoading && state.snapshot.auth != null) {
+                            Icon(Icons.Outlined.Refresh, contentDescription = "刷新目录")
+                        }
                     }
+                    DirectoryPicker(
+                        state = state,
+                        onRefreshDirectories = onRefreshDirectories,
+                        onOpenDirectory = onOpenDirectory,
+                        onSelectDirectoryCrumb = onSelectDirectoryCrumb,
+                        onSaveImportPath = onSaveImportPath,
+                    )
                 }
             }
         }
@@ -675,6 +749,77 @@ private fun SettingsScreen(
                 value = "${state.snapshot.items.count { it.progress?.positionMs ?: 0L > 0L }}",
                 support = "本地保存，进入播放时自动续播",
             )
+        }
+    }
+}
+
+@Composable
+private fun DirectoryPicker(
+    state: MoeUiState,
+    onRefreshDirectories: () -> Unit,
+    onOpenDirectory: (CloudFile) -> Unit,
+    onSelectDirectoryCrumb: (Int) -> Unit,
+    onSaveImportPath: () -> Unit,
+) {
+    val picker = state.directoryPicker
+    val canBrowse = !state.isLoading && state.snapshot.auth != null
+    val pathLabel = state.importPathDraft.ifBlank { "根目录" }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            text = "当前：$pathLabel",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(count = picker.crumbs.size) { index ->
+                TextButton(onClick = { onSelectDirectoryCrumb(index) }, enabled = canBrowse) {
+                    Text(picker.crumbs[index].name)
+                }
+            }
+        }
+        if (!picker.isLoaded) {
+            OutlinedButton(onClick = onRefreshDirectories, enabled = canBrowse) {
+                Icon(Icons.Outlined.Refresh, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("获取目录结构")
+            }
+        } else if (picker.folders.isEmpty()) {
+            Text(
+                text = "当前目录没有子目录",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                picker.folders.take(80).forEach { folder ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(MaterialTheme.shapes.small)
+                            .clickable(enabled = canBrowse) { onOpenDirectory(folder) }
+                            .padding(horizontal = 8.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Outlined.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = folder.name,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Icon(Icons.Outlined.KeyboardArrowRight, contentDescription = null)
+                    }
+                }
+            }
+        }
+        Button(onClick = onSaveImportPath, enabled = !state.isLoading) {
+            Icon(Icons.Outlined.Save, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("保存当前路径")
         }
     }
 }
@@ -803,11 +948,29 @@ private fun PosterImage(
         }
     } else {
         AsyncImage(
-            model = url,
+            model = rememberMediaImageRequest(url),
             contentDescription = title,
             contentScale = contentScale,
             modifier = modifier,
         )
+    }
+}
+
+@Composable
+private fun rememberMediaImageRequest(url: String?): ImageRequest? {
+    val context = LocalContext.current
+    return remember(url) {
+        if (url.isNullOrBlank()) {
+            null
+        } else {
+            ImageRequest.Builder(context)
+                .data(url)
+                .crossfade(true)
+                .addHeader("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+                .addHeader("User-Agent", MEDIA_IMAGE_USER_AGENT)
+                .addHeader("Referer", imageReferer(url))
+                .build()
+        }
     }
 }
 
@@ -907,6 +1070,19 @@ private fun formatTime(ms: Long): String {
     val minute = (total % 3600) / 60
     val second = total % 60
     return if (hour > 0) "%d:%02d:%02d".format(hour, minute, second) else "%02d:%02d".format(minute, second)
+}
+
+private const val MEDIA_IMAGE_USER_AGENT =
+    "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+
+private fun imageReferer(url: String): String {
+    val lower = url.lowercase()
+    return when {
+        "javbus" in lower -> "https://www.javbus.com/"
+        "javdb" in lower || "jdbstatic" in lower -> "https://javdb.com/"
+        "dmm.co.jp" in lower || "dmm.com" in lower -> "https://www.dmm.co.jp/"
+        else -> "https://www.guangyapan.com/"
+    }
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {

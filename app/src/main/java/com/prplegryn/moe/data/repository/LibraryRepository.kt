@@ -8,6 +8,7 @@ import com.prplegryn.moe.data.model.LibraryItem
 import com.prplegryn.moe.data.model.LibrarySnapshot
 import com.prplegryn.moe.data.model.LoginPreparation
 import com.prplegryn.moe.data.model.MediaResource
+import com.prplegryn.moe.data.model.MovieMetadata
 import com.prplegryn.moe.data.model.SmsRequest
 import com.prplegryn.moe.data.scraper.MetadataAggregator
 import java.io.IOException
@@ -22,8 +23,15 @@ class LibraryRepository(
 
     fun snapshot(): LibrarySnapshot = database.snapshot()
 
-    fun saveImportPath(path: String) {
-        database.saveImportPath(path)
+    fun saveImportPath(path: String, folderId: String?) {
+        database.saveImportPath(path, folderId)
+    }
+
+    suspend fun listImportDirectories(parentId: String?): List<CloudFile> {
+        if (!isLoggedIn()) throw IOException("Guangya account is not logged in")
+        return listFolderPage(parentId)
+            .filter { it.isDirectory }
+            .sortedBy { it.name.lowercase() }
     }
 
     fun isLoggedIn(): Boolean = database.getAuth() != null
@@ -62,12 +70,13 @@ class LibraryRepository(
 
     suspend fun importCloudVideos(): Int {
         if (!isLoggedIn()) throw IOException("Guangya account is not logged in")
-        val importPath = database.getSettings().importPath.trim()
-        val files = if (importPath.isBlank()) {
-            listAllVideos()
-        } else {
-            val folderId = resolveFolderPath(importPath)
-            listVideosUnder(folderId)
+        val settings = database.getSettings()
+        val importPath = settings.importPath.trim()
+        val selectedFolderId = settings.importFolderId?.takeIf { it.isNotBlank() }
+        val files = when {
+            selectedFolderId != null -> listVideosUnder(selectedFolderId)
+            importPath.isBlank() -> listAllVideos()
+            else -> listVideosUnder(resolveFolderPath(importPath))
         }
         val imported = withContext(Dispatchers.IO) { database.upsertResources(files) }
         scrapeMissing()
@@ -78,9 +87,10 @@ class LibraryRepository(
         val items = withContext(Dispatchers.IO) { database.snapshot().items }
         var saved = 0
         for (item in items) {
-            if (item.metadata != null) continue
-            val metadata = aggregator.scrape(item.resource) ?: continue
-            withContext(Dispatchers.IO) { database.saveMetadata(metadata) }
+            val metadata = item.metadata
+            if (metadata != null && metadata.hasArtwork()) continue
+            val scraped = aggregator.scrape(item.resource) ?: continue
+            withContext(Dispatchers.IO) { database.saveMetadata(scraped) }
             saved++
         }
         return saved
@@ -168,4 +178,8 @@ class LibraryRepository(
 private fun String.isVideoFileName(): Boolean {
     val lower = lowercase()
     return listOf(".mp4", ".mkv", ".avi", ".wmv", ".flv", ".mov", ".m4v", ".ts", ".webm").any(lower::endsWith)
+}
+
+private fun MovieMetadata.hasArtwork(): Boolean {
+    return !posterUrl.isNullOrBlank() && !coverUrl.isNullOrBlank() && screenshots.isNotEmpty()
 }
