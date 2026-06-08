@@ -2,6 +2,7 @@ package com.prplegryn.moe.data.repository
 
 import com.prplegryn.moe.data.cloud.GuangyaClient
 import com.prplegryn.moe.data.local.MoeDatabase
+import com.prplegryn.moe.data.model.CloudFile
 import com.prplegryn.moe.data.model.CloudAuthState
 import com.prplegryn.moe.data.model.LibraryItem
 import com.prplegryn.moe.data.model.LibrarySnapshot
@@ -20,6 +21,10 @@ class LibraryRepository(
     private var guangyaClient = createClient()
 
     fun snapshot(): LibrarySnapshot = database.snapshot()
+
+    fun saveImportPath(path: String) {
+        database.saveImportPath(path)
+    }
 
     fun isLoggedIn(): Boolean = database.getAuth() != null
 
@@ -57,14 +62,16 @@ class LibraryRepository(
 
     suspend fun importCloudVideos(): Int {
         if (!isLoggedIn()) throw IOException("Guangya account is not logged in")
-        val files = mutableListOf<com.prplegryn.moe.data.model.CloudFile>()
-        var page = 0
-        do {
-            val batch = guangyaClient.listVideos(page = page, pageSize = 100)
-            files += batch.filter { !it.isDirectory }
-            page++
-        } while (batch.size >= 100 && page < 50)
-        return withContext(Dispatchers.IO) { database.upsertResources(files) }
+        val importPath = database.getSettings().importPath.trim()
+        val files = if (importPath.isBlank()) {
+            listAllVideos()
+        } else {
+            val folderId = resolveFolderPath(importPath)
+            listVideosUnder(folderId)
+        }
+        val imported = withContext(Dispatchers.IO) { database.upsertResources(files) }
+        scrapeMissing()
+        return imported
     }
 
     suspend fun scrapeMissing(): Int {
@@ -103,4 +110,62 @@ class LibraryRepository(
             database.saveAuth(auth)
         }
     }
+
+    private suspend fun listAllVideos(): List<CloudFile> {
+        val files = mutableListOf<CloudFile>()
+        var page = 0
+        do {
+            val batch = guangyaClient.listVideos(page = page, pageSize = 100)
+            files += batch.filter { !it.isDirectory }
+            page++
+        } while (batch.size >= 100 && page < 50)
+        return files
+    }
+
+    private suspend fun resolveFolderPath(path: String): String? {
+        val parts = path.trim().trim('/').split('/').map(String::trim).filter(String::isNotBlank)
+        if (parts.isEmpty()) return null
+        var parentId: String? = null
+        for (part in parts) {
+            val children = listFolderPage(parentId)
+            val folder = children.firstOrNull { it.isDirectory && it.name.equals(part, ignoreCase = true) }
+                ?: throw IOException("未找到导入路径：$path")
+            parentId = folder.fileId
+        }
+        return parentId
+    }
+
+    private suspend fun listVideosUnder(parentId: String?): List<CloudFile> {
+        val output = mutableListOf<CloudFile>()
+        val stack = mutableListOf<String?>()
+        stack.add(parentId)
+        while (stack.isNotEmpty()) {
+            val current = stack.removeAt(stack.lastIndex)
+            val children = listFolderPage(current)
+            for (file in children) {
+                if (file.isDirectory) {
+                    stack.add(file.fileId)
+                } else if (file.fileType == 2 || file.name.isVideoFileName()) {
+                    output.add(file)
+                }
+            }
+        }
+        return output
+    }
+
+    private suspend fun listFolderPage(parentId: String?): List<CloudFile> {
+        val files = mutableListOf<CloudFile>()
+        var page = 0
+        do {
+            val batch = guangyaClient.listFiles(parentId = parentId, page = page, pageSize = 100)
+            files += batch
+            page++
+        } while (batch.size >= 100 && page < 50)
+        return files
+    }
+}
+
+private fun String.isVideoFileName(): Boolean {
+    val lower = lowercase()
+    return listOf(".mp4", ".mkv", ".avi", ".wmv", ".flv", ".mov", ".m4v", ".ts", ".webm").any(lower::endsWith)
 }

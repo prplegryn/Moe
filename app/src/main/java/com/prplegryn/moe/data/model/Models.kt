@@ -131,4 +131,9 @@ data class MovieMetadata(
 data class LibrarySnapshot(
     val auth: CloudAuthState?,
     val items: List<LibraryItem>,
+    val settings: AppSettings = AppSettings(),
+)
+
+data class AppSettings(
+    val importPath: String = "",
 )

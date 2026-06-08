@@ -1,7 +1,18 @@
 package com.prplegryn.moe.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,18 +29,26 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.FileDownload
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Login
 import androidx.compose.material.icons.outlined.Logout
 import androidx.compose.material.icons.outlined.Movie
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material3.Button
@@ -38,6 +57,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -57,12 +77,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -103,20 +128,31 @@ fun MoeApp(viewModel: MoeViewModel) {
         return
     }
 
+    val selectedItem = state.snapshot.items.firstOrNull { it.resource.id == state.selectedItemId }
+    if (selectedItem != null) {
+        DetailScreen(
+            item = selectedItem,
+            isLoading = state.isLoading,
+            onBack = viewModel::closeDetails,
+            onPlay = { viewModel.openPlayer(selectedItem) },
+        )
+        return
+    }
+
     MoeScaffold(
         state = state,
         snackbarHostState = snackbarHostState,
         onTab = viewModel::selectTab,
         onRefresh = viewModel::refresh,
-        onScrapeMissing = viewModel::scrapeMissing,
         onPhone = viewModel::updatePhone,
         onCode = viewModel::updateCode,
         onSendSms = viewModel::sendSms,
         onLogin = viewModel::completeLogin,
         onLogout = viewModel::logout,
         onImport = viewModel::importCloudVideos,
-        onPlay = viewModel::openPlayer,
-        onScrape = viewModel::scrape,
+        onOpenDetails = viewModel::openDetails,
+        onImportPath = viewModel::updateImportPath,
+        onSaveImportPath = viewModel::saveImportPath,
     )
 }
 
@@ -127,27 +163,36 @@ private fun MoeScaffold(
     snackbarHostState: SnackbarHostState,
     onTab: (MoeTab) -> Unit,
     onRefresh: () -> Unit,
-    onScrapeMissing: () -> Unit,
     onPhone: (String) -> Unit,
     onCode: (String) -> Unit,
     onSendSms: () -> Unit,
     onLogin: () -> Unit,
     onLogout: () -> Unit,
     onImport: () -> Unit,
-    onPlay: (LibraryItem) -> Unit,
-    onScrape: (LibraryItem) -> Unit,
+    onOpenDetails: (LibraryItem) -> Unit,
+    onImportPath: (String) -> Unit,
+    onSaveImportPath: () -> Unit,
 ) {
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
-                title = { Text("Moe") },
+                title = {
+                    Column {
+                        Text("Moe", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = "Library",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                },
                 actions = {
                     IconButton(onClick = onRefresh, enabled = !state.isLoading) {
                         Icon(Icons.Outlined.Refresh, contentDescription = "刷新")
                     }
-                    IconButton(onClick = onScrapeMissing, enabled = !state.isLoading && state.snapshot.items.isNotEmpty()) {
-                        Icon(Icons.Outlined.Search, contentDescription = "匹配")
+                    IconButton(onClick = onImport, enabled = !state.isLoading && state.snapshot.auth != null) {
+                        Icon(Icons.Outlined.FileDownload, contentDescription = "导入")
                     }
                 },
             )
@@ -178,11 +223,10 @@ private fun MoeScaffold(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (state.tab) {
-                MoeTab.Library -> LibraryScreen(
+                MoeTab.Library -> LibraryPosterGrid(
                     items = state.snapshot.items,
                     isLoading = state.isLoading,
-                    onPlay = onPlay,
-                    onScrape = onScrape,
+                    onOpenDetails = onOpenDetails,
                     onImport = { onTab(MoeTab.Cloud) },
                 )
                 MoeTab.Cloud -> CloudScreen(
@@ -194,163 +238,310 @@ private fun MoeScaffold(
                     onLogout = onLogout,
                     onImport = onImport,
                 )
-                MoeTab.Settings -> SettingsScreen(state)
+                MoeTab.Settings -> SettingsScreen(
+                    state = state,
+                    onImportPath = onImportPath,
+                    onSaveImportPath = onSaveImportPath,
+                )
             }
-            if (state.isLoading) {
-                Surface(
-                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp),
-                    shape = MaterialTheme.shapes.medium,
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    tonalElevation = 3.dp,
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Text("处理中", style = MaterialTheme.typography.labelLarge)
-                    }
-                }
-            }
+            BusyOverlay(state.isLoading)
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun LibraryScreen(
+private fun LibraryPosterGrid(
     items: List<LibraryItem>,
     isLoading: Boolean,
-    onPlay: (LibraryItem) -> Unit,
-    onScrape: (LibraryItem) -> Unit,
+    onOpenDetails: (LibraryItem) -> Unit,
     onImport: () -> Unit,
 ) {
     if (items.isEmpty()) {
         EmptyState(
-            title = "影视库为空",
-            action = "导入",
+            title = "还没有影片",
+            action = "连接光鸭并导入",
             onAction = onImport,
             enabled = !isLoading,
         )
         return
     }
-    LazyColumn(
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(3),
+        contentPadding = PaddingValues(start = 12.dp, top = 16.dp, end = 12.dp, bottom = 24.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            LibraryHeader(items)
+        }
         items(items, key = { it.resource.id }) { item ->
-            LibraryItemCard(
+            PosterTile(
                 item = item,
-                isLoading = isLoading,
-                onPlay = { onPlay(item) },
-                onScrape = { onScrape(item) },
+                onClick = { onOpenDetails(item) },
             )
         }
     }
 }
 
 @Composable
-private fun LibraryItemCard(
-    item: LibraryItem,
-    isLoading: Boolean,
-    onPlay: () -> Unit,
-    onScrape: () -> Unit,
-) {
-    val metadata = item.metadata
-    Card(
-        shape = MaterialTheme.shapes.medium,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+private fun LibraryHeader(items: List<LibraryItem>) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        Text(
+            text = "全部影片",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = "${items.size} 部 · ${items.count { it.metadata != null }} 部已匹配资料",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun PosterTile(item: LibraryItem, onClick: () -> Unit) {
+    val metadata = item.metadata
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.medium)
+            .clickable(onClick = onClick)
+            .animateContentSize(),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(2f / 3f)
+                .clip(MaterialTheme.shapes.medium)
+                .background(MaterialTheme.colorScheme.surfaceVariant),
         ) {
-            Poster(metadata)
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+            PosterImage(
+                url = metadata?.posterUrl ?: metadata?.coverUrl,
+                title = metadata?.title ?: item.resource.name,
+                modifier = Modifier.fillMaxSize(),
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(6.dp)
+                    .clip(MaterialTheme.shapes.small)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.88f))
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
             ) {
                 Text(
-                    text = metadata?.title ?: item.resource.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = buildMetaLine(metadata, item.resource.size),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = metadata?.contentId ?: item.resource.name.substringBeforeLast('.'),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (metadata?.genres?.isNotEmpty() == true) {
+            }
+            AnimatedVisibility(
+                visible = (item.progress?.positionMs ?: 0L) > 0L,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                enter = fadeIn(),
+                exit = fadeOut(),
+            ) {
+                LinearProgressIndicator(
+                    progress = item.progress?.fraction ?: 0f,
+                    modifier = Modifier.fillMaxWidth().height(3.dp),
+                )
+            }
+        }
+        Text(
+            text = metadata?.title ?: item.resource.name,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Medium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = artistLine(metadata),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DetailScreen(
+    item: LibraryItem,
+    isLoading: Boolean,
+    onBack: () -> Unit,
+    onPlay: () -> Unit,
+) {
+    BackHandler(onBack = onBack)
+    val metadata = item.metadata
+    Scaffold(
+        contentWindowInsets = WindowInsets.safeDrawing,
+        topBar = {
+            TopAppBar(
+                title = {
                     Text(
-                        text = metadata.genres.take(4).joinToString(" / "),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.tertiary,
+                        text = metadata?.title ?: item.resource.name,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                }
-                ProgressLine(item.progress)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onPlay, enabled = !isLoading) {
-                        Icon(Icons.Outlined.PlayArrow, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("播放")
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Outlined.ArrowBack, contentDescription = "返回")
                     }
-                    OutlinedButton(onClick = onScrape, enabled = !isLoading) {
-                        Icon(Icons.Outlined.Search, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("匹配")
-                    }
-                }
+                },
+            )
+        },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            item {
+                HeroArtwork(item = item, onPlay = onPlay, isLoading = isLoading)
+            }
+            item {
+                DetailTitle(item)
+            }
+            item {
+                PreviewStrip(metadata)
+            }
+            item {
+                DetailInfo(item)
             }
         }
     }
 }
 
 @Composable
-private fun Poster(metadata: MovieMetadata?) {
-    val url = metadata?.posterUrl ?: metadata?.coverUrl
-    Surface(
-        modifier = Modifier.width(92.dp).aspectRatio(2f / 3f),
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceVariant,
+private fun HeroArtwork(item: LibraryItem, onPlay: () -> Unit, isLoading: Boolean) {
+    val metadata = item.metadata
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(420.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant),
     ) {
-        if (url.isNullOrBlank()) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    Icons.Outlined.Movie,
-                    contentDescription = null,
-                    modifier = Modifier.size(36.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        PosterImage(
+            url = metadata?.coverUrl ?: metadata?.posterUrl,
+            title = metadata?.title ?: item.resource.name,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop,
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.62f)),
+                    ),
+                ),
+        )
+        FloatingActionButton(
+            onClick = { if (!isLoading) onPlay() },
+            modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+            shape = CircleShape,
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
+        ) {
+            Icon(Icons.Outlined.PlayArrow, contentDescription = "播放")
+        }
+    }
+}
+
+@Composable
+private fun DetailTitle(item: LibraryItem) {
+    val metadata = item.metadata
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = metadata?.title ?: item.resource.name,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            InfoPill(metadata?.contentId ?: item.resource.name.substringBeforeLast('.'))
+            metadata?.releaseDate?.let { InfoPill(it) }
+            metadata?.runtimeMinutes?.takeIf { it > 0 }?.let { InfoPill("${it}分钟") }
+        }
+        Text(
+            text = artistLine(metadata),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun PreviewStrip(metadata: MovieMetadata?) {
+    val previews = metadata?.screenshots.orEmpty().ifEmpty {
+        listOfNotNull(metadata?.coverUrl, metadata?.posterUrl)
+    }
+    if (previews.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            text = "预览",
+            modifier = Modifier.padding(horizontal = 18.dp),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 18.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            items(previews) { url ->
+                AsyncImage(
+                    model = url,
+                    contentDescription = "预览",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .width(220.dp)
+                        .aspectRatio(16f / 9f)
+                        .clip(MaterialTheme.shapes.medium)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
                 )
             }
-        } else {
-            AsyncImage(
-                model = url,
-                contentDescription = metadata?.title,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
         }
     }
 }
 
 @Composable
-private fun ProgressLine(progress: WatchProgress?) {
-    val fraction = progress?.fraction ?: 0f
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        LinearProgressIndicator(
-            progress = fraction,
-            modifier = Modifier.fillMaxWidth().height(4.dp),
-        )
-        Text(
-            text = if (progress == null || progress.positionMs <= 0) "未播放" else formatProgress(progress),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+private fun DetailInfo(item: LibraryItem) {
+    val metadata = item.metadata
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        metadata?.description?.takeIf { it.isNotBlank() }?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        DetailRow("片商", metadata?.maker)
+        DetailRow("系列", metadata?.series)
+        DetailRow("导演", metadata?.director)
+        DetailRow("标签", metadata?.genres?.joinToString(" / "))
+        DetailRow("来源", metadata?.sourceName)
+        DetailRow("文件", item.resource.name)
+        DetailRow("大小", formatSize(item.resource.size))
+        item.progress?.let {
+            DetailRow("进度", formatProgress(it))
+        }
     }
 }
 
@@ -365,8 +556,8 @@ private fun CloudScreen(
     onImport: () -> Unit,
 ) {
     LazyColumn(
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
             Card(
@@ -374,10 +565,10 @@ private fun CloudScreen(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    Text("光鸭网盘", style = MaterialTheme.typography.titleLarge)
+                    Text("光鸭网盘", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                     val auth = state.snapshot.auth
                     if (auth == null) {
                         OutlinedTextField(
@@ -388,12 +579,10 @@ private fun CloudScreen(
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilledTonalButton(onClick = onSendSms, enabled = !state.isLoading) {
-                                Icon(Icons.Outlined.Login, contentDescription = null)
-                                Spacer(Modifier.width(6.dp))
-                                Text("发送验证码")
-                            }
+                        FilledTonalButton(onClick = onSendSms, enabled = !state.isLoading) {
+                            Icon(Icons.Outlined.Login, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("发送验证码")
                         }
                         OutlinedTextField(
                             value = state.code,
@@ -403,18 +592,8 @@ private fun CloudScreen(
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         )
-                        Button(
-                            onClick = onLogin,
-                            enabled = !state.isLoading && state.smsRequest != null,
-                        ) {
+                        Button(onClick = onLogin, enabled = !state.isLoading && state.smsRequest != null) {
                             Text("登录")
-                        }
-                        state.captchaUrl?.let { url ->
-                            Text(
-                                text = url,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
                         }
                     } else {
                         Text(
@@ -422,15 +601,15 @@ private fun CloudScreen(
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Button(onClick = onImport, enabled = !state.isLoading) {
                                 Icon(Icons.Outlined.FileDownload, contentDescription = null)
-                                Spacer(Modifier.width(6.dp))
-                                Text("导入视频")
+                                Spacer(Modifier.width(8.dp))
+                                Text("导入并匹配")
                             }
                             OutlinedButton(onClick = onLogout, enabled = !state.isLoading) {
                                 Icon(Icons.Outlined.Logout, contentDescription = null)
-                                Spacer(Modifier.width(6.dp))
+                                Spacer(Modifier.width(8.dp))
                                 Text("退出")
                             }
                         }
@@ -440,41 +619,226 @@ private fun CloudScreen(
         }
         item {
             MetricCard(
-                title = "已导入",
-                value = "${state.snapshot.items.size}",
-                support = "本地播放记录 ${state.snapshot.items.count { it.progress != null }}",
+                title = "导入路径",
+                value = state.snapshot.settings.importPath.ifBlank { "全盘视频" },
+                support = "在设置中配置路径，导入时会自动匹配资料",
             )
         }
     }
 }
 
 @Composable
-private fun SettingsScreen(state: MoeUiState) {
+private fun SettingsScreen(
+    state: MoeUiState,
+    onImportPath: (String) -> Unit,
+    onSaveImportPath: () -> Unit,
+) {
     LazyColumn(
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
-            MetricCard(
-                title = "刮削优先级",
-                value = "JavDB > JavBus",
-                support = "已匹配 ${state.snapshot.items.count { it.metadata != null }} / ${state.snapshot.items.size}",
-            )
+            Card(
+                shape = MaterialTheme.shapes.medium,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Icon(Icons.Outlined.Folder, contentDescription = null)
+                        Text("导入路径", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    }
+                    OutlinedTextField(
+                        value = state.importPathDraft,
+                        onValueChange = onImportPath,
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("光鸭目录路径") },
+                        placeholder = { Text("/Movies/JAV") },
+                        singleLine = true,
+                        supportingText = { Text("留空表示扫描全盘视频；填写目录路径会递归导入该路径下的视频") },
+                    )
+                    Button(onClick = onSaveImportPath, enabled = !state.isLoading) {
+                        Icon(Icons.Outlined.Save, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("保存路径")
+                    }
+                }
+            }
         }
         item {
             MetricCard(
-                title = "Release 签名",
-                value = "固定",
-                support = "app/signing/moe-release.p12",
+                title = "资料匹配",
+                value = "导入时自动",
+                support = "优先 JavDB，再回退 JavBus",
             )
         }
         item {
             MetricCard(
                 title = "播放进度",
                 value = "${state.snapshot.items.count { it.progress?.positionMs ?: 0L > 0L }}",
-                support = "SQLite 本地保存",
+                support = "本地保存，进入播放时自动续播",
             )
         }
+    }
+}
+
+@Composable
+private fun PlayerScreen(
+    state: PlayerUiState,
+    onProgress: (Long, Long) -> Unit,
+    onClose: (Long, Long) -> Unit,
+) {
+    val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
+    var closed by remember { mutableStateOf(false) }
+    val player = remember(state.url) {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(ExoMediaItem.fromUri(state.url))
+            prepare()
+            if (state.startPositionMs > 0L) seekTo(state.startPositionMs)
+            playWhenReady = true
+        }
+    }
+
+    fun duration(): Long {
+        val value = player.duration
+        return if (value == C.TIME_UNSET || value < 0L) 0L else value
+    }
+
+    fun closeOnce() {
+        if (!closed) {
+            closed = true
+            onClose(player.currentPosition, duration())
+        }
+    }
+
+    BackHandler { closeOnce() }
+
+    LaunchedEffect(player) {
+        while (true) {
+            delay(2_000L)
+            onProgress(player.currentPosition, duration())
+        }
+    }
+
+    DisposableEffect(activity, player) {
+        val previous = activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        onDispose {
+            closeOnce()
+            activity?.requestedOrientation = previous
+            player.release()
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { PlayerView(it).apply { this.player = player } },
+            update = { it.player = player },
+        )
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .background(Color.Black.copy(alpha = 0.42f))
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = state.item.metadata?.title ?: state.item.resource.name,
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = { closeOnce() }) {
+                Icon(Icons.Outlined.Close, contentDescription = "关闭", tint = Color.White)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BusyOverlay(isLoading: Boolean) {
+    AnimatedVisibility(
+        visible = isLoading,
+        modifier = Modifier.fillMaxSize(),
+        enter = fadeIn() + slideInVertically { -it / 8 },
+        exit = fadeOut(),
+    ) {
+        Box(contentAlignment = Alignment.TopCenter) {
+            Surface(
+                modifier = Modifier.padding(top = 10.dp),
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                tonalElevation = 3.dp,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text("处理中", style = MaterialTheme.typography.labelLarge)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PosterImage(
+    url: String?,
+    title: String,
+    modifier: Modifier,
+    contentScale: ContentScale = ContentScale.Crop,
+) {
+    if (url.isNullOrBlank()) {
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            Icon(
+                Icons.Outlined.Movie,
+                contentDescription = null,
+                modifier = Modifier.size(36.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    } else {
+        AsyncImage(
+            model = url,
+            contentDescription = title,
+            contentScale = contentScale,
+            modifier = modifier,
+        )
+    }
+}
+
+@Composable
+private fun InfoPill(text: String) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.secondaryContainer,
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun DetailRow(label: String, value: String?) {
+    if (value.isNullOrBlank()) return
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -485,11 +849,11 @@ private fun MetricCard(title: String, value: String, support: String) {
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.fillMaxWidth().padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, style = MaterialTheme.typography.titleLarge)
+            Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             Text(support, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -503,7 +867,7 @@ private fun EmptyState(title: String, action: String, onAction: () -> Unit, enab
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Icon(
                 Icons.Outlined.VideoLibrary,
@@ -519,70 +883,11 @@ private fun EmptyState(title: String, action: String, onAction: () -> Unit, enab
     }
 }
 
-@Composable
-private fun PlayerScreen(
-    state: PlayerUiState,
-    onProgress: (Long, Long) -> Unit,
-    onClose: (Long, Long) -> Unit,
-) {
-    val context = LocalContext.current
-    val player = remember(state.url) {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(ExoMediaItem.fromUri(state.url))
-            prepare()
-            if (state.startPositionMs > 0L) seekTo(state.startPositionMs)
-            playWhenReady = true
-        }
-    }
-
-    fun duration(): Long {
-        val value = player.duration
-        return if (value == C.TIME_UNSET || value < 0L) 0L else value
-    }
-
-    BackHandler {
-        onClose(player.currentPosition, duration())
-    }
-
-    LaunchedEffect(player) {
-        while (true) {
-            delay(2_000L)
-            onProgress(player.currentPosition, duration())
-        }
-    }
-
-    DisposableEffect(player) {
-        onDispose {
-            onClose(player.currentPosition, duration())
-            player.release()
-        }
-    }
-
-    Box(
-        modifier = Modifier.fillMaxSize().background(Color.Black),
-    ) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { PlayerView(it).apply { this.player = player } },
-            update = { it.player = player },
-        )
-        IconButton(
-            onClick = { onClose(player.currentPosition, duration()) },
-            modifier = Modifier.align(Alignment.TopEnd).padding(16.dp),
-        ) {
-            Icon(Icons.Outlined.Close, contentDescription = "关闭", tint = Color.White)
-        }
-    }
-}
-
-private fun buildMetaLine(metadata: MovieMetadata?, size: Long): String {
-    if (metadata == null) return formatSize(size)
-    return listOfNotNull(
-        metadata.contentId,
-        metadata.releaseDate,
-        metadata.runtimeMinutes.takeIf { it > 0 }?.let { "${it}分钟" },
-        formatSize(size),
-    ).joinToString(" · ")
+private fun artistLine(metadata: MovieMetadata?): String {
+    return metadata?.actresses?.take(3)?.joinToString(" / ") { it.name }
+        ?.takeIf { it.isNotBlank() }
+        ?: metadata?.maker
+        ?: "未知艺术家"
 }
 
 private fun formatSize(bytes: Long): String {
@@ -607,4 +912,10 @@ private fun formatTime(ms: Long): String {
     val minute = (total % 3600) / 60
     val second = total % 60
     return if (hour > 0) "%d:%02d:%02d".format(hour, minute, second) else "%02d:%02d".format(minute, second)
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

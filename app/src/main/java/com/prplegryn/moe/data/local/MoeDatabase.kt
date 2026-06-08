@@ -6,6 +6,7 @@ import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import com.prplegryn.moe.data.model.ActressInfo
+import com.prplegryn.moe.data.model.AppSettings
 import com.prplegryn.moe.data.model.CloudAuthState
 import com.prplegryn.moe.data.model.CloudFile
 import com.prplegryn.moe.data.model.LibraryItem
@@ -17,7 +18,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 
-class MoeDatabase(context: Context) : SQLiteOpenHelper(context, "moe.db", null, 1) {
+class MoeDatabase(context: Context) : SQLiteOpenHelper(context, "moe.db", null, 2) {
     private val json = Json { ignoreUnknownKeys = true }
 
     override fun onCreate(db: SQLiteDatabase) {
@@ -90,14 +91,31 @@ class MoeDatabase(context: Context) : SQLiteOpenHelper(context, "moe.db", null, 
             )
             """.trimIndent(),
         )
+        createSettingsTable(db)
         db.execSQL("CREATE INDEX idx_resources_updated ON resources(updated_at DESC)")
         db.execSQL("CREATE INDEX idx_metadata_content_id ON metadata(content_id)")
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            createSettingsTable(db)
+        }
+    }
+
+    private fun createSettingsTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """.trimIndent(),
+        )
+    }
 
     fun snapshot(): LibrarySnapshot {
         val auth = getAuth()
+        val settings = getSettings()
         val metadata = getMetadata().associateBy { it.resourceId }
         val progress = getProgress().associateBy { it.resourceId }
         val items = getResources().map { resource ->
@@ -107,7 +125,40 @@ class MoeDatabase(context: Context) : SQLiteOpenHelper(context, "moe.db", null, 
                 progress = progress[resource.id],
             )
         }
-        return LibrarySnapshot(auth, items)
+        return LibrarySnapshot(auth, items, settings)
+    }
+
+    fun getSettings(): AppSettings = AppSettings(
+        importPath = getSetting("import_path").orEmpty(),
+    )
+
+    fun saveImportPath(path: String) {
+        saveSetting("import_path", path.trim())
+    }
+
+    private fun getSetting(key: String): String? = readableDatabase.query(
+        "app_settings",
+        arrayOf("value"),
+        "key = ?",
+        arrayOf(key),
+        null,
+        null,
+        null,
+    ).use { cursor ->
+        if (!cursor.moveToFirst()) return@use null
+        cursor.requiredString("value")
+    }
+
+    private fun saveSetting(key: String, value: String) {
+        writableDatabase.insertWithOnConflict(
+            "app_settings",
+            null,
+            ContentValues().apply {
+                put("key", key)
+                put("value", value)
+            },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
     }
 
     fun getAuth(): CloudAuthState? = readableDatabase.query(

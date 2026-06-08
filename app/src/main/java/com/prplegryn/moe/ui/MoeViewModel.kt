@@ -38,7 +38,30 @@ class MoeViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refresh() {
-        _uiState.update { it.copy(snapshot = repository.snapshot()) }
+        val snapshot = repository.snapshot()
+        _uiState.update {
+            it.copy(
+                snapshot = snapshot,
+                importPathDraft = snapshot.settings.importPath,
+            )
+        }
+    }
+
+    fun openDetails(item: LibraryItem) {
+        _uiState.update { it.copy(selectedItemId = item.resource.id) }
+    }
+
+    fun closeDetails() {
+        _uiState.update { it.copy(selectedItemId = null) }
+    }
+
+    fun updateImportPath(value: String) {
+        _uiState.update { it.copy(importPathDraft = value) }
+    }
+
+    fun saveImportPath() {
+        repository.saveImportPath(uiState.value.importPathDraft)
+        _uiState.update { it.copy(snapshot = repository.snapshot(), message = "导入路径已保存") }
     }
 
     fun sendSms() = launchBusy {
@@ -84,7 +107,7 @@ class MoeViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 snapshot = repository.snapshot(),
-                message = "已导入 $count 个视频",
+                message = "已导入 $count 个视频，已自动匹配资料",
             )
         }
     }
@@ -160,6 +183,8 @@ data class MoeUiState(
     val message: String? = null,
     val phone: String = "",
     val code: String = "",
+    val importPathDraft: String = "",
+    val selectedItemId: Long? = null,
     val smsRequest: SmsRequest? = null,
     val captchaUrl: String? = null,
     val activePlayer: PlayerUiState? = null,
